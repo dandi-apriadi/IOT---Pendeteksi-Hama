@@ -1,0 +1,24 @@
+{
+  "name": "esp32-iot-platform",
+  "version": "1.0.0",
+  "description": "ESP32 IoT Platform with Real-time Dashboard",
+  "main": "index.js",
+  "scripts": {
+    "start": "concurrently \"npm run start:backend\" \"npm run start:frontend\"",
+    "start:backend": "cd backend && node index.js",
+    "start:frontend": "cd frontend && npm start",
+    "dev:backend": "cd backend && nodemon index.js",
+    "dev": "concurrently \"npm run dev:backend\" \"npm run start:frontend\"",
+    "install:all": "npm install && cd backend && npm install && cd ../frontend && npm install",
+    "build": "cd frontend && npm run build"
+  },
+  "keywords": ["esp32", "iot", "dashboard", "real-time"],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "concurrently": "^8.2.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  }
+}

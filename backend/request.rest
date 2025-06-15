@@ -1,0 +1,51 @@
+###
+# Testing
+GET https://api.rajaongkir.com/starter/province
+Content-Type: application/json
+key: b89677246deb9ff63f38d89f32ab7b7
+
+###
+# Login Admin
+POST http://localhost:5000/login
+Content-Type: application/json
+
+{
+    "email": "dandigeming85@gmail.com",
+    "password": "123"
+}
+
+###Update Category
+PATCH http://localhost:5000//api/product/category/update-category/a7477245-3c54-4d14-a2b7-7cd7711557eb
+Content-Type: application/json
+
+{
+    "name": "Fashion Wanita category updated",
+    "description": "Tren Fashion Terkini Untuk Wanita, Dengan Pilihan Busana Untuk Segala Keperluan, Termasuk Pakaian Kasual, Formal, Dan Pesta. updated"
+}
+###
+
+###
+# get data user
+GET http://localhost:5000/api/destinations
+
+###
+# logout
+DELETE http://localhost:5000/delete-category/002bdd07-78dc-40ca-9991-c2799fd42aa8
+
+###
+# logout
+DELETE http://localhost:5000/logout
+###
+# logout
+GET http://localhost:5000/me
+
+###
+POST http://localhost:5000/add-category
+Content-Type: application/json
+
+{
+    "name":"product 2",
+    "description": "Test"
+}
+###
+GET http://localhost:5000/get-category-management-data

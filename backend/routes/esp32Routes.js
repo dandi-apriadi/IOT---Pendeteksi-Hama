@@ -1,0 +1,158 @@
+import express from 'express';
+import * as esp32Controller from "../controllers/esp32Controller.js";
+import * as sensorDataController from "../controllers/sensorDataController.js";
+
+const router = express.Router();
+
+/**
+ * ESP32 API Routes
+ * IoT System for Sensor Data Management
+ */
+
+// Sensor data routes - HTTP API
+router.post('/data', esp32Controller.recordSensorData);
+router.get('/data', esp32Controller.getLatestSensorData);
+
+// Enhanced data routes for frontend
+router.get('/data/history/:deviceId', sensorDataController.getSensorHistory);
+router.get('/data/latest', esp32Controller.getLatestSensorData);
+router.get('/data/readings/latest', sensorDataController.getLatestReadings);
+router.get('/data/daily/:deviceId', sensorDataController.getDailyConsumption);
+router.get('/data/stats/:deviceId', sensorDataController.getAggregateStats);
+
+// Check first before setting up this route to avoid errors
+if (typeof esp32Controller.getRecentSensorDataForDashboard === 'function') {
+    router.get('/data/dashboard', esp32Controller.getRecentSensorDataForDashboard);
+} else {
+    // Create a fallback route that just returns an error
+    router.get('/data/dashboard', (req, res) => {
+        return res.status(501).json({
+            status: 'error',
+            message: 'This endpoint is not implemented yet'
+        });
+    });
+}
+
+// Device management routes
+router.get('/devices', esp32Controller.getDeviceStatus);
+
+// Command routes
+router.post('/command/:deviceId', esp32Controller.sendCommandToESP32);
+
+// Add a diagnostic endpoint for testing connectivity
+router.get('/diagnostics', (req, res) => {
+    const wsConnections = global.espConnections ? [...global.espConnections.keys()] : [];
+
+    res.json({
+        status: 'success',
+        message: 'Diagnostics information',
+        data: {
+            connected_devices: wsConnections,
+            websocket_active: wsConnections.length > 0,
+            server_time: new Date(),
+            socket_io: {
+                connected_clients: global.frontendConnections ? global.frontendConnections.size : 0
+            }
+        }
+    });
+});
+
+// Add ping endpoint for connectivity testing
+router.get('/ping', (req, res) => {
+    const deviceId = req.query.device_id;
+    const timestamp = new Date();
+
+    // If device_id provided, check if device is registered
+    if (deviceId) {
+        // Check if device is in WebSocket connections
+        const isConnected = global.espConnections ? global.espConnections.has(deviceId) : false;
+
+        if (isConnected) {
+            // Get device connection and send a ping command
+            const deviceConn = global.espConnections.get(deviceId);
+            try {
+                deviceConn.ws.ping();
+                console.log(`Ping sent to device ${deviceId}`);
+            } catch (err) {
+                console.error(`Error sending ping to device ${deviceId}:`, err);
+            }
+        }
+
+        res.json({
+            status: 'success',
+            message: 'Ping response',
+            device_id: deviceId,
+            connected_via_websocket: isConnected,
+            server_time: timestamp,
+            echo: req.query
+        });
+    } else {
+        // No device_id, just return server status
+        res.json({
+            status: 'success',
+            message: 'Server is running',
+            server_time: timestamp,
+            active_connections: global.espConnections ? global.espConnections.size : 0,
+            frontend_connections: global.frontendConnections ? global.frontendConnections.size : 0,
+            echo: req.query
+        });
+    }
+});
+
+// Energy trends routes for real-time monitoring
+router.get('/energy-trends/:deviceId', sensorDataController.getEnergyTrends);
+router.get('/energy-trends/latest/:deviceId', sensorDataController.getLatestEnergyData);
+
+// New route for optimized electrical chart data for dashboard
+router.get('/electrical-chart/:deviceId', sensorDataController.getElectricalChartData);
+
+// New route for aggregated power consumption statistics
+router.get('/power-stats/:deviceId', async (req, res) => {
+    try {
+        const { deviceId } = req.params;
+        const period = req.query.period || 'day'; // day, week, month
+
+        // Forward to controller function
+        await sensorDataController.getPowerConsumptionStats(req, res);
+    } catch (error) {
+        res.status(500).json({
+            status: 'error',
+            message: 'Failed to retrieve power statistics',
+            error: error.message
+        });
+    }
+});
+
+// Add a dashboard summary endpoint to get all chart data in one call
+router.get('/dashboard-summary/:deviceId', async (req, res) => {
+    try {
+        const { deviceId } = req.params;
+        const timeframe = req.query.timeframe || '24h';
+
+        // Collect all needed data in parallel
+        const [electricalData, energyTrends, latestData] = await Promise.all([
+            // Directly call controller functions to avoid extra HTTP requests
+            sensorDataController.getElectricalChartDataInternal(deviceId, timeframe),
+            sensorDataController.getEnergyTrendsInternal(deviceId, timeframe),
+            sensorDataController.getLatestEnergyDataInternal(deviceId)
+        ]);
+
+        res.json({
+            status: 'success',
+            message: 'Dashboard summary data retrieved',
+            device_id: deviceId,
+            electrical_chart: electricalData,
+            energy_trends: energyTrends,
+            latest_data: latestData,
+            timestamp: new Date()
+        });
+    } catch (error) {
+        res.status(500).json({
+            status: 'error',
+            message: 'Failed to retrieve dashboard summary',
+            error: error.message
+        });
+    }
+});
+
+export default router;

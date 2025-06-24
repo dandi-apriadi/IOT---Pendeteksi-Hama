@@ -6,7 +6,8 @@ import {
     ReferenceLine
 } from 'recharts';
 
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
+// API URL - NO LOCALHOST FALLBACK
+const API_BASE_URL = process.env.REACT_APP_API_URL;
 
 /**
  * ElectricalUsageTrends Component

@@ -2,7 +2,8 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import axios from 'axios';
 import { errorOnce } from '../utils/consoleLogger';
 
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
+// API URL - NO HARDCODE FALLBACK
+const API_BASE_URL = process.env.REACT_APP_API_URL;
 
 /**
  * Custom hook for fetching and managing real-time energy trend data

@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import axios from 'axios'; // Make sure axios is imported
 import { useESP32Data } from "../../../hooks/useESP32Data";
 import PerangkatSection from "../../../components/dashboard/PerangkatSection";
 import JadwalSection from "../../../components/dashboard/JadwalSection";
@@ -7,14 +6,10 @@ import ESP32Section from "../../../components/dashboard/ESP32Section";
 import RealtimeClock from "../../../components/dashboard/RealtimeClock";
 import ConnectionQualityIndicator from "../../../components/dashboard/ConnectionQualityIndicator";
 import { useDataConsistencyVerification } from "../../../hooks/useDataConsistencyVerification";
-import StaticModeBanner from "../../../components/dashboard/static-mode-banner";
-import DataSummaryPanel from "../../../components/dashboard/DataSummaryPanel";
-import SensorDataLiveView from "../../../components/dashboard/SensorDataLiveView";
 import "../../../components/dashboard/dashboard-stable.css"; // Import the stabilizing CSS
 import OfflineModeBanner from "../../../components/dashboard/OfflineModeBanner";
 import { logOnce, warnOnce, errorOnce } from "../../../utils/consoleLogger";
 // Import device status components
-import DeviceStatusDisplay from "../../../components/dashboard/DeviceStatusDisplay";
 import DeviceStatusCard from "../../../components/dashboard/DeviceStatusCard";
 
 // Constants
@@ -22,8 +17,8 @@ const REQUEST_CACHE = new Map();
 const CACHE_DURATION = 30000; // 30 seconds cache
 const DEVICE_INACTIVE_TIMEOUT = 15000; // 15 seconds without data means device is inactive
 
-// Add API base URL constant if missing
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
+// Add API base URL constant - NO LOCALHOST FALLBACK
+const API_BASE_URL = process.env.REACT_APP_API_URL;
 
 const Dashboard = () => {
   // Set esp32 as the default tab
@@ -39,9 +34,7 @@ const Dashboard = () => {
   const [loadingState, setLoading] = useState(false);
   const [localSensorData, setLocalSensorData] = useState(null);
   const [localLastUpdate, setLocalLastUpdate] = useState(null);
-  const [lastDataReceived, setLastDataReceived] = useState(null);
-  const [connectionAttempts, setConnectionAttempts] = useState(0);
-  const [currentTimeframe, setCurrentTimeframe] = useState('24h'); // Add timeframe state
+  const [lastDataReceived, setLastDataReceived] = useState(null); const [connectionAttempts, setConnectionAttempts] = useState(0);
 
   // Device connection tracking
   const deviceDataRef = useRef({
@@ -59,7 +52,6 @@ const Dashboard = () => {
     lastDataTimestamp: null,
     dataFreshness: 0
   });
-
   // Data hooks
   const {
     sensorData,
@@ -67,12 +59,10 @@ const Dashboard = () => {
     deviceStatus,
     deviceOnlineStatus,
     lastUpdate,
-    sensorHistory,
     isConnected,
     isOffline, // New offline state
     loading: dataLoading,
     sendCommand = () => console.warn('sendCommand not implemented'),
-    fetchSensorHistory = () => console.warn('fetchSensorHistory not implemented'),
     fetchLatestSensorData = () => console.warn('fetchLatestSensorData not implemented'),
     fetchDeviceStatus = () => console.warn('fetchDeviceStatus not implemented'),
     checkConnection = () => Promise.resolve(false),
@@ -89,7 +79,6 @@ const Dashboard = () => {
     console.warn('fetchLatestSensorData is not available');
     return Promise.resolve(null);
   }, [fetchLatestSensorData]);
-
   const safeFetchDeviceStatus = useCallback(() => {
     if (typeof fetchDeviceStatus === 'function') {
       return fetchDeviceStatus();
@@ -97,14 +86,6 @@ const Dashboard = () => {
     console.warn('fetchDeviceStatus is not available');
     return Promise.resolve(null);
   }, [fetchDeviceStatus]);
-
-  const safeFetchSensorHistory = useCallback((deviceId, timeframe) => {
-    if (typeof fetchSensorHistory === 'function') {
-      return fetchSensorHistory(deviceId, timeframe);
-    }
-    console.warn('fetchSensorHistory is not available');
-    return Promise.resolve([]);
-  }, [fetchSensorHistory]);
 
   const safeCheckConnection = useCallback(() => {
     if (typeof checkConnection === 'function') {
@@ -214,12 +195,6 @@ const Dashboard = () => {
       serverConnected: isConnected
     }));
   }, [devices, isConnected, sensorData, lastUpdate, deviceStatus, verifyDeviceData]);
-
-  // Chart timeframe handler
-  const handleTimeframeChange = (timeframe) => {
-    setCurrentTimeframe(timeframe); // Update the timeframe state 
-    fetchSensorHistory('ESP32-PUMP-01', timeframe);
-  };
 
   // Error message computation - updated to include offline state
   const error = isOffline
@@ -411,8 +386,7 @@ const Dashboard = () => {
       .then(() => {
         Promise.all([
           safeFetchLatestSensorData().catch(err => errorOnce('FETCH_SENSOR_ERROR', 'Fetch latest data error:', err.message)),
-          safeFetchDeviceStatus().catch(err => errorOnce('FETCH_DEVICE_ERROR', 'Fetch device status error:', err.message)),
-          safeFetchSensorHistory('ESP32-PUMP-01', '24h').catch(err => errorOnce('FETCH_HISTORY_ERROR', 'Fetch history error:', err.message))
+          safeFetchDeviceStatus().catch(err => errorOnce('FETCH_DEVICE_ERROR', 'Fetch device status error:', err.message))
         ]).then(() => {
           deviceDataRef.current.consecutiveFailures = 0;
           setDeviceConnectionInfo(prev => ({
@@ -486,24 +460,12 @@ const Dashboard = () => {
     }
   }, [sensorData]);
 
-  useEffect(() => {
-    if (sensorHistory && sensorHistory.length > 0) {
-      console.log('Sensor History Data:', sensorHistory);
-      console.log('History timeframe:', currentTimeframe); // Use currentTimeframe state instead
-      console.log('Latest history entry:', sensorHistory[0]);
-      console.log('Oldest history entry:', sensorHistory[sensorHistory.length - 1]);
-    }
-  }, [sensorHistory, currentTimeframe]); // Use currentTimeframe in dependencies
-
   // Setup device monitoring with real-time updates
   useEffect(() => {
     // Register the real-time data callback to update local data
-    const cleanup = safeRegisterCallback(handleRealTimeDataUpdate);
-
-    // Initialize data
+    const cleanup = safeRegisterCallback(handleRealTimeDataUpdate);    // Initialize data
     safeFetchLatestSensorData();
     safeFetchDeviceStatus();
-    safeFetchSensorHistory('ESP32-PUMP-01', '24h');
 
     // Do an initial check on component mount
     checkDeviceStatus();
@@ -517,7 +479,7 @@ const Dashboard = () => {
       clearInterval(statusInterval);
     };
   }, [safeRegisterCallback, handleRealTimeDataUpdate, safeFetchLatestSensorData,
-    safeFetchDeviceStatus, safeFetchSensorHistory, checkDeviceStatus]);
+    safeFetchDeviceStatus, checkDeviceStatus]);
 
   // Add optimization for sensor data fetches
   useEffect(() => {
@@ -630,21 +592,15 @@ const Dashboard = () => {
             lastUpdate={lastUpdate}
             isConnected={isConnected}
           />
-        </div>
-
-        {/* Tab contents */}
+        </div>        {/* Tab contents */}
         {activeTab === "esp32" && (
           <ESP32Section
             isConnected={isConnected}
             sensorData={sensorData}
             devices={devices}
             lastUpdate={lastUpdate}
-            sensorHistory={sensorHistory}
             sendCommand={sendCommand}
-            fetchSensorHistory={fetchSensorHistory}
-            loading={dataLoading}
             electricalData={electricalData}
-            handleTimeframeChange={handleTimeframeChange}
           />
         )}
 

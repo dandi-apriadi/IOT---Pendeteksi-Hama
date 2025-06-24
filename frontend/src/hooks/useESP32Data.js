@@ -3,8 +3,8 @@ import axios from 'axios';
 import { io } from 'socket.io-client';
 import { errorOnce } from '../utils/consoleLogger';
 
-// Constants
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
+// Constants - NO HARDCODE FALLBACK
+const API_BASE_URL = process.env.REACT_APP_API_URL;
 
 export function useESP32Data(deviceId = 'ESP32-PUMP-01') {
     // State

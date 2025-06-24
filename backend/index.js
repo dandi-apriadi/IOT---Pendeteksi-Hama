@@ -110,18 +110,18 @@ const DATA_BUFFER_SIZE = 100; // Number of recent readings to keep in memory
 const app = express();
 const server = createServer(app);
 
-// CORS Configuration
+// CORS Configuration - NO HARDCODE FALLBACK
 app.use(
     cors({
         credentials: true,
-        origin: process.env.CLIENT_ORIGIN || "http://localhost:3000",
+        origin: process.env.CLIENT_ORIGIN,
     })
 );
 
-// Socket.IO untuk frontend komunikasi
+// Socket.IO pentru frontend komunikasi - NO HARDCODE FALLBACK
 const io = new Server(server, {
     cors: {
-        origin: process.env.CLIENT_ORIGIN || "http://localhost:3000",
+        origin: process.env.CLIENT_ORIGIN,
         methods: ["GET", "POST"],
         credentials: true, // Add credentials support
         allowedHeaders: ["*"] // Allow all headers for better compatibility

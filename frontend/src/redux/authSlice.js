@@ -1,8 +1,8 @@
 import { createSlice } from '@reduxjs/toolkit';
 import axios from 'axios';
 
-// Store baseURL as a string constant, not a function
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
+// Store baseURL as a string constant - NO HARDCODE FALLBACK
+const API_BASE_URL = process.env.REACT_APP_API_URL;
 
 const initialState = {
     user: null,

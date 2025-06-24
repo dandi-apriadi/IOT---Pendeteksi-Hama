@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import io from 'socket.io-client';
 
-// Socket configuration
-const SOCKET_URL = process.env.REACT_APP_SOCKET_URL || 'http://localhost:5000';
+// Socket configuration - NO HARDCODE FALLBACK
+const SOCKET_URL = process.env.REACT_APP_SOCKET_URL;
 const RECONNECT_ATTEMPTS = 5;
 const RECONNECTION_DELAY_BASE = 1000;
 const SOCKET_TIMEOUT = 5000; // 5 second connection timeout

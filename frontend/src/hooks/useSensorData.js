@@ -2,8 +2,8 @@ import { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import { useESP32Data } from './useESP32Data';
 
-// Base URL for API requests
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
+// Base URL for API requests - NO HARDCODE FALLBACK
+const API_BASE_URL = process.env.REACT_APP_API_URL;
 
 /**
  * Custom hook for accessing ESP32 sensor data with enhanced querying capabilities

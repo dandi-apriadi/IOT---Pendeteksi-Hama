@@ -14,15 +14,14 @@ const fs = require('fs').promises;
 const { execSync } = require('child_process');
 const readline = require('readline');
 
-// Configuration
+// Configuration - NO LOCALHOST FALLBACK
 const config = {
     backend: {
-        http: 'http://localhost:5000',
-        websocket: 'ws://localhost:5000/ws',
+        http: process.env.BACKEND_URL,
+        websocket: process.env.WS_SERVER_URL,
         apiKey: process.env.API_KEY || ''
-    },
-    frontend: {
-        url: 'http://localhost:3000',
+    }, frontend: {
+        url: process.env.CLIENT_ORIGIN,
         buildCheck: true
     },
     database: {

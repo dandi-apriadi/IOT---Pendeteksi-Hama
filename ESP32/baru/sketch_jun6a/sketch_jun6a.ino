@@ -25,8 +25,11 @@ const char* ssid = "esta";
 const char* password = "1234567890";
 
 // Server configuration
-const char* serverHost = "192.168.207.169";
-const int serverPort = 5000;
+// NOTE: Change serverHost to your actual server IP address
+// For local development: use your computer's local IP (e.g., "192.168.1.100")
+// For production: use your server's public IP or domain name
+const char* serverHost = "192.168.207.169";  // Replace with your server IP
+const int serverPort = 5000;  // Should match backend PORT environment variable
 const char* httpEndpoint = "/api/esp32/data";
 const char* wsEndpoint = "/ws";
 

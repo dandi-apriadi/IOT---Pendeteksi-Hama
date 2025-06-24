@@ -2,8 +2,8 @@ import { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import { errorOnce } from '../utils/consoleLogger';
 
-// API URL from environment variables or default
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
+// API URL from environment variables - NO HARDCODE FALLBACK
+const API_BASE_URL = process.env.REACT_APP_API_URL;
 
 /**
  * Hook to fetch and manage all model data from the database
@@ -56,7 +56,8 @@ export const useAllModelData = () => {
                 sprayingLogs: sprayingResponse,
                 notifications: notificationsResponse,
                 settings: settingsResponse
-            };        } catch (err) {
+            };
+        } catch (err) {
             errorOnce('FETCH_ALL_MODEL_DATA_ERROR', 'Error fetching all model data:', err);
             setError(prev => ({ ...prev, all: err.message }));
         } finally {
@@ -77,7 +78,8 @@ export const useAllModelData = () => {
                 return response.data.data;
             } else {
                 throw new Error('Invalid response format');
-            }        } catch (err) {
+            }
+        } catch (err) {
             errorOnce('FETCH_DEVICES_ERROR', 'Error fetching devices:', err);
             setError(prev => ({ ...prev, devices: err.message }));
             return [];
@@ -99,7 +101,8 @@ export const useAllModelData = () => {
                 return response.data.data;
             } else {
                 throw new Error('Invalid response format');
-            }        } catch (err) {
+            }
+        } catch (err) {
             errorOnce('FETCH_SPRAYING_LOGS_ERROR', 'Error fetching spraying logs:', err);
             setError(prev => ({ ...prev, sprayingLogs: err.message }));
             return [];
@@ -121,7 +124,8 @@ export const useAllModelData = () => {
                 return response.data.data;
             } else {
                 throw new Error('Invalid response format');
-            }        } catch (err) {
+            }
+        } catch (err) {
             errorOnce('FETCH_NOTIFICATIONS_ERROR', 'Error fetching notifications:', err);
             setError(prev => ({ ...prev, notifications: err.message }));
             return [];
@@ -143,7 +147,8 @@ export const useAllModelData = () => {
                 return response.data.data;
             } else {
                 throw new Error('Invalid response format');
-            }        } catch (err) {
+            }
+        } catch (err) {
             errorOnce('FETCH_SETTINGS_ERROR', 'Error fetching settings:', err);
             setError(prev => ({ ...prev, settings: err.message }));
             return [];

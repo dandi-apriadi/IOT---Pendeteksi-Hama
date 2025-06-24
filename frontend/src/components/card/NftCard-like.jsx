@@ -4,6 +4,8 @@ import { BsCheckCircleFill, BsXCircleFill, BsEye, BsCart4, BsStar, BsStarFill, B
 import PropTypes from 'prop-types';
 import { useState, useEffect } from 'react';
 import { useSelector } from 'react-redux';
+import { API_CONFIG } from "../../config/apiConfig";
+import axios from "axios";
 
 const NftCard = ({
   name,
@@ -23,10 +25,8 @@ const NftCard = ({
 }) => {
   const navigate = useNavigate();
   const [isFlipped, setIsFlipped] = useState(false);
-  const [liked, setLiked] = useState(isLiked);
-  const [isLoading, setIsLoading] = useState(false);
+  const [liked, setLiked] = useState(isLiked); const [isLoading, setIsLoading] = useState(false);
   const user = useSelector((state) => state.auth.user);
-  const { baseURL } = useSelector((state) => state.auth);
 
   const formatPrice = (number) => {
     return new Intl.NumberFormat('id-ID', {
@@ -84,19 +84,15 @@ const NftCard = ({
       setIsLoading(false);
     }
   };
-
   const handleLike = async () => {
     try {
-      const response = await baseURL({
-        method: 'POST',
-        url: `/api/product/like/${productId}`,
+      const response = await axios.post(`${API_CONFIG.API_URL}/product/like/${productId}`, {
+        product_id: productId,
+        user_id: user.id
+      }, {
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${user.token}`
-        },
-        data: {
-          product_id: productId,
-          user_id: user.id
         }
       });
 
@@ -111,12 +107,9 @@ const NftCard = ({
       console.error('Error liking product:', error);
     }
   };
-
   const handleUnlike = async () => {
     try {
-      const response = await baseURL({
-        method: 'DELETE',
-        url: `/api/product/unlike/${productId}`,
+      const response = await axios.delete(`${API_CONFIG.API_URL}/product/unlike/${productId}`, {
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${user.token}`

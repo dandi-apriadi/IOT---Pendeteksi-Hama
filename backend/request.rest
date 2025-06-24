@@ -1,3 +1,6 @@
+# API Base URL Configuration - CHANGE THIS TO YOUR SERVER URL
+@baseUrl = http://your-server-ip:5000
+
 ###
 # Testing
 GET https://api.rajaongkir.com/starter/province
@@ -6,7 +9,7 @@ key: b89677246deb9ff63f38d89f32ab7b7
 
 ###
 # Login Admin
-POST http://localhost:5000/login
+POST {{baseUrl}}/login
 Content-Type: application/json
 
 {
@@ -15,7 +18,7 @@ Content-Type: application/json
 }
 
 ###Update Category
-PATCH http://localhost:5000//api/product/category/update-category/a7477245-3c54-4d14-a2b7-7cd7711557eb
+PATCH {{baseUrl}}/api/product/category/update-category/a7477245-3c54-4d14-a2b7-7cd7711557eb
 Content-Type: application/json
 
 {
@@ -26,21 +29,21 @@ Content-Type: application/json
 
 ###
 # get data user
-GET http://localhost:5000/api/destinations
+GET {{baseUrl}}/api/destinations
 
 ###
 # logout
-DELETE http://localhost:5000/delete-category/002bdd07-78dc-40ca-9991-c2799fd42aa8
+DELETE {{baseUrl}}/delete-category/002bdd07-78dc-40ca-9991-c2799fd42aa8
 
 ###
 # logout
-DELETE http://localhost:5000/logout
+DELETE {{baseUrl}}/logout
 ###
 # logout
-GET http://localhost:5000/me
+GET {{baseUrl}}/me
 
 ###
-POST http://localhost:5000/add-category
+POST {{baseUrl}}/add-category
 Content-Type: application/json
 
 {
@@ -48,4 +51,4 @@ Content-Type: application/json
     "description": "Test"
 }
 ###
-GET http://localhost:5000/get-category-management-data
+GET {{baseUrl}}/get-category-management-data

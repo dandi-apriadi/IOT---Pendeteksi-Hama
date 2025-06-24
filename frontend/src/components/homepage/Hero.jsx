@@ -333,10 +333,8 @@ const Hero = ({
         setLocalItineraryError(null);
 
         try {
-            console.log(`🔍 Hero component fetching itinerary data for ID: ${packageId}`);
-
-            // Use a configurable API base URL (could come from environment variables)
-            const apiBaseUrl = process.env.REACT_APP_API_URL || 'http://localhost:5000';
+            console.log(`🔍 Hero component fetching itinerary data for ID: ${packageId}`);            // Use a configurable API base URL - NO LOCALHOST FALLBACK
+            const apiBaseUrl = process.env.REACT_APP_API_BASE_URL;
             const response = await axios.get(`${apiBaseUrl}/api/itinerary/${packageId}`, {
                 params: {
                     language: language.toLowerCase()

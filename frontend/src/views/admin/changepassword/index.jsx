@@ -4,6 +4,8 @@ import { MdLock, MdVisibility, MdVisibilityOff, MdDone, MdArrowForward, MdShield
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "react-toastify";
 import { useSelector } from "react-redux";
+import { API_CONFIG } from "../../../config/apiConfig";
+import axios from "axios";
 
 const ChangePassword = () => {
     // State for form inputs
@@ -19,10 +21,8 @@ const ChangePassword = () => {
     // State for form submission
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [isSuccess, setIsSuccess] = useState(false);
-    const [errorMessage, setErrorMessage] = useState(null);
-
-    // Get user info from Redux store
-    const { user, baseURL } = useSelector((state) => state.auth);
+    const [errorMessage, setErrorMessage] = useState(null);    // Get user info from Redux store
+    const { user } = useSelector((state) => state.auth);
 
     // Password strength calculation
     const calculatePasswordStrength = (password) => {
@@ -72,10 +72,8 @@ const ChangePassword = () => {
             return;
         }
 
-        setIsSubmitting(true);
-
-        try {
-            const response = await baseURL.post("/api/change-password", {
+        setIsSubmitting(true); try {
+            const response = await axios.post(`${API_CONFIG.API_URL}/change-password`, {
                 currentPassword,
                 newPassword,
                 userId: user.user_id // Updated to use the correct property name

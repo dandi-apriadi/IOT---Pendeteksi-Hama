@@ -1,13 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import './value-transitions.css'; // Import the CSS for transitions
-import SensorDataTable from './SensorDataTable';
-import SensorChart from './SensorChart';
-import ElectricalUsageTrends from './ElectricalUsageTrends';
 import { logOnce, warnOnce, errorOnce } from "../../utils/consoleLogger"; // Add missing import
 
-// Constants
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
+// Constants - NO LOCALHOST FALLBACK
+const API_BASE_URL = process.env.REACT_APP_API_URL;
 const DISCONNECTION_THRESHOLD = 30000; // 30 seconds threshold for disconnection detection
 
 /**
@@ -18,15 +15,9 @@ const ESP32Section = ({
     sensorData,
     devices,
     lastUpdate,
-    sensorHistory,
     sendCommand,
-    fetchSensorHistory,
-    loading,
-    electricalData,
-    handleTimeframeChange
+    electricalData
 }) => {
-    const [viewMode, setViewMode] = useState('table'); // 'table' or 'chart'
-    const [timeframe, setTimeframe] = useState('24h');
     const [dataUpdated, setDataUpdated] = useState(false);
     const prevSensorDataRef = useRef(null);
     // Remove the autoRefresh toggle and always keep it true
@@ -271,25 +262,6 @@ const ESP32Section = ({
             clearInterval(intervalId);
         };
     }, [autoRefresh]);
-
-    // Add a separate, less frequent interval for history data
-    useEffect(() => {
-        if (!autoRefresh) return;
-
-        const historyInterval = setInterval(() => {
-            // Only fetch history occasionally to avoid overloading
-            fetchSensorHistory('ESP32-PUMP-01', timeframe);
-            console.log('Refreshed sensor history data');
-        }, 30000); // Every 30 seconds
-
-        return () => clearInterval(historyInterval);
-    }, [autoRefresh, timeframe, fetchSensorHistory]);
-
-    // Update timeframe and fetch data
-    const onTimeframeChange = (newTimeframe) => {
-        setTimeframe(newTimeframe);
-        handleTimeframeChange(newTimeframe);
-    };
 
     // Handle pump control command
     const handlePumpControl = async (action) => {
@@ -696,90 +668,21 @@ const ESP32Section = ({
                                         </div>
 
                                         {/* Trends Section */}
-                                        <div className="mt-4 border-t border-blue-100 pt-4">
-                                            <div className="flex items-center justify-between mb-3">
-                                                <h5 className="text-xs font-medium text-gray-500">ELECTRICAL TRENDS (5-SECOND UPDATES)</h5>
-                                                <div className="flex space-x-1">
-                                                    {['1m', '5m', '15m', '30m'].map((period) => (
-                                                        <button
-                                                            key={period}
-                                                            className={`px-2 py-1 text-xs font-medium rounded ${timeframe === period
-                                                                ? 'bg-blue-600 text-white'
-                                                                : 'bg-white text-gray-600 hover:bg-gray-100'
-                                                                }`}
-                                                            onClick={() => onTimeframeChange(period)}
-                                                        >
-                                                            {period}
-                                                        </button>
-                                                    ))}
-                                                </div>
-                                            </div>
-
-                                            {/* Placeholder for mini trend chart - will be replaced with actual chart */}
+                                        <div className="mt-4 border-t border-blue-100 pt-4">                                            <div className="flex items-center justify-between mb-3">
+                                            <h5 className="text-xs font-medium text-gray-500">ELECTRICAL TRENDS (5-SECOND UPDATES)</h5>
+                                        </div>                                            {/* Placeholder for mini trend chart - will be replaced with actual chart */}
                                             <div className="h-20 bg-gray-50 rounded-lg flex items-center justify-center">
                                                 <div className="text-gray-400 text-xs">
-                                                    {loading ? 'Loading trends...' : 'Trend visualization coming soon'}
+                                                    Trend visualization coming soon
                                                 </div>
                                             </div>
                                         </div>
                                     </div>
-                                </div>
-                            </div>
+                                </div>                            </div>
                         </div>
                     </div>
                 </div>
             </div>
-
-            {/* Timeframe selector with refresh button */}
-            <div className="flex justify-between items-center">
-                <button
-                    onClick={() => fetchLatestSensorData()}
-                    className="px-3 py-1.5 text-xs bg-blue-500 text-white rounded-md flex items-center hover:bg-blue-600"
-                >
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                    </svg>
-                    Refresh Now
-                </button>
-                <div className="flex space-x-2">
-                    {['1h', '6h', '12h', '24h', '7d', '30d'].map(option => (
-                        <button
-                            key={option}
-                            onClick={() => onTimeframeChange(option)}
-                            className={`px-2.5 py-1 text-xs font-medium rounded ${timeframe === option
-                                ? 'bg-blue-600 text-white'
-                                : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-                                }`}
-                        >
-                            {option}
-                        </button>
-                    ))}
-                </div>
-            </div>
-
-            {/* Data Display Section based on viewMode */}
-            {viewMode === 'trends' ? (
-                <ElectricalUsageTrends
-                    deviceId={devices?.find(d => d.device_id?.includes('ESP32'))?.device_id || 'ESP32-PUMP-01'}
-                />
-            ) : (
-                <div className="bg-white rounded-lg shadow p-4">
-                    {viewMode === 'table' ? (
-                        <SensorDataTable
-                            data={sensorHistory}
-                            isLoading={loading}
-                            maxRows={15}
-                        />
-                    ) : (
-                        <SensorChart
-                            data={sensorHistory}
-                            loading={loading}
-                            onTimeframeChange={onTimeframeChange}
-                            realTimeUpdates={autoRefresh}
-                        />
-                    )}
-                </div>
-            )}
         </div>
     );
 };

@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from "react";
 import axios from 'axios';
 
-// Constants
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
+// Constants - NO LOCALHOST FALLBACK
+const API_BASE_URL = process.env.REACT_APP_API_URL;
 
 const PerangkatSection = ({ devices, deviceStatus, isConnected, loading, error, onRefresh }) => {
     const [searchTerm, setSearchTerm] = useState('');

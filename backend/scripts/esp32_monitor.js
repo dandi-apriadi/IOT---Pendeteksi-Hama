@@ -11,10 +11,10 @@ const axios = require('axios');
 const readline = require('readline');
 const WebSocket = require('ws');
 
-// Configuration
+// Configuration - NO LOCALHOST FALLBACK
 const config = {
-    backend: 'http://localhost:5000',
-    wsServer: 'ws://localhost:5000/ws',
+    backend: process.env.BACKEND_URL,
+    wsServer: process.env.WS_SERVER_URL,
     refreshInterval: 3000,  // ms
     verbose: process.argv.includes('--verbose')
 };

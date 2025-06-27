@@ -15,9 +15,6 @@ import { Server } from 'socket.io';
 import { WebSocketServer } from 'ws';
 import db from './config/Database.js';
 
-// Import models
-import Sensor from './models/sensorModel.js';
-
 // Import routes
 import authRoutes from './routes/shared/authRoutes.js';
 import esp32Routes from './routes/esp32Routes.js';
@@ -27,6 +24,8 @@ import profileRoutes from './routes/administrator/profileRoutes.js';
 import userManagementRoutes from './routes/administrator/userManagementRoutes.js';
 import alarmRoutes from './routes/alarm.js';
 import analyticsRoutes from './routes/analytics.js';
+import scheduleRoutes from './routes/scheduleRoutes.js';
+import notificationRoutes from './routes/notificationRoutes.js';
 
 // Import the new data processing function
 import { processWebSocketData } from './controllers/esp32Controller.js';
@@ -118,7 +117,7 @@ app.use(
     })
 );
 
-// Socket.IO pentru frontend komunikasi - NO HARDCODE FALLBACK
+// Socket.IO untuk frontend komunikasi - NO HARDCODE FALLBACK
 const io = new Server(server, {
     cors: {
         origin: process.env.CLIENT_ORIGIN,
@@ -288,6 +287,8 @@ app.use('/api/profile', profileRoutes);
 app.use('/api/users', userManagementRoutes);
 app.use('/api/alarms', alarmRoutes);
 app.use('/api/analytics', analyticsRoutes);
+app.use('/api/schedules', scheduleRoutes);
+app.use('/api/notifications', notificationRoutes);
 
 // =====================================================
 // ESP32 WebSocket Handler
@@ -311,7 +312,6 @@ wss.on('connection', (ws, req) => {
         clearTimeout(ws.pingTimeoutId);
         ws.pingTimeoutId = setTimeout(() => {
             if (!ws.isAlive) {
-                // Connection is dead, terminate it
                 console.error(`WebSocket ping timeout for ${deviceId || 'unknown device'}`);
                 ws.terminate();
                 return;
@@ -347,7 +347,8 @@ wss.on('connection', (ws, req) => {
             // Handle device_register message
             if (messageType === 'device_register') {
                 deviceId = message.device_id;
-                console.log(`Device ${deviceId} attempting to register`);
+                // Tambahkan log untuk debugging
+                console.log('[DEBUG] Device registered via WebSocket:', deviceId);
 
                 // Add device to the connections map with proper initialized connectionStats
                 espConnections.set(deviceId, {

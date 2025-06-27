@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useESP32Data } from "../../../hooks/useESP32Data";
+import { useScheduleManagement } from "../../../hooks/useScheduleManagement";
 import PerangkatSection from "../../../components/dashboard/PerangkatSection";
 import JadwalSection from "../../../components/dashboard/JadwalSection";
 import ESP32Section from "../../../components/dashboard/ESP32Section";
@@ -51,11 +52,26 @@ const Dashboard = () => {
     deviceName: 'ESP32-PUMP-01',
     lastDataTimestamp: null,
     dataFreshness: 0
-  });
+  });  // Schedule management state
+  const [showAddScheduleModal, setShowAddScheduleModal] = useState(false);
+  // Schedule management hook
+  const {
+    schedules: hookSchedules,
+    loading: hookScheduleLoading,
+    error: hookScheduleError,
+    fetchSchedules: hookFetchSchedules,
+    createSchedule: hookCreateSchedule,
+    updateSchedule: hookUpdateSchedule,
+    deleteSchedule: hookDeleteSchedule,
+    toggleScheduleStatus: hookToggleScheduleStatus,
+    clearError: clearScheduleError,
+    scheduleCount,
+    activeScheduleCount
+  } = useScheduleManagement();
+
   // Data hooks
   const {
-    sensorData,
-    devices,
+    sensorData, devices,
     deviceStatus,
     deviceOnlineStatus,
     lastUpdate,
@@ -65,27 +81,36 @@ const Dashboard = () => {
     sendCommand = () => console.warn('sendCommand not implemented'),
     fetchLatestSensorData = () => console.warn('fetchLatestSensorData not implemented'),
     fetchDeviceStatus = () => console.warn('fetchDeviceStatus not implemented'),
+    fetchDevices = () => console.warn('fetchDevices not implemented'),
     checkConnection = () => Promise.resolve(false),
     registerRealTimeCallback = () => () => { }, // Returns a no-op cleanup function
     unregisterRealTimeCallback = () => { }, // No-op function
     retryConnection = () => console.warn('retryConnection not implemented')
   } = useESP32Data() || {};
 
-  // Create safe implementations of missing functions
+  // Debug logging for devices
+  useEffect(() => {
+    console.log('Dashboard - Devices from useESP32Data:', devices);
+    console.log('Dashboard - Devices length:', devices?.length);
+    console.log('Dashboard - Devices is array:', Array.isArray(devices));
+  }, [devices]);
+
+  // Create safe implementations of these functions with proper memoization
   const safeFetchLatestSensorData = useCallback(() => {
     if (typeof fetchLatestSensorData === 'function') {
       return fetchLatestSensorData();
     }
-    console.warn('fetchLatestSensorData is not available');
+    // Return a resolved promise instead of logging warnings
     return Promise.resolve(null);
-  }, [fetchLatestSensorData]);
+  }, []); // Empty dependency array to ensure stability
+
   const safeFetchDeviceStatus = useCallback(() => {
     if (typeof fetchDeviceStatus === 'function') {
       return fetchDeviceStatus();
     }
-    console.warn('fetchDeviceStatus is not available');
+    // Return a resolved promise instead of logging warnings
     return Promise.resolve(null);
-  }, [fetchDeviceStatus]);
+  }, []); // Empty dependency array to ensure stability
 
   const safeCheckConnection = useCallback(() => {
     if (typeof checkConnection === 'function') {
@@ -110,6 +135,59 @@ const Dashboard = () => {
       console.warn('unregisterRealTimeCallback is not available');
     }
   }, [unregisterRealTimeCallback]);
+  // Schedule management functions - now using hooks
+  const tambahJadwal = useCallback(async (jadwalData) => {
+    try {
+      const result = await hookCreateSchedule(jadwalData);
+      logOnce('SCHEDULE_ADDED', 'Jadwal berhasil ditambahkan:', result);
+      setShowAddScheduleModal(false);
+      return result;
+    } catch (error) {
+      errorOnce('ADD_SCHEDULE_ERROR', 'Gagal menambahkan jadwal:', error.message);
+      throw error;
+    }
+  }, [hookCreateSchedule]);
+
+  const updateJadwal = useCallback(async (scheduleId, updateData) => {
+    try {
+      const result = await hookUpdateSchedule(scheduleId, updateData);
+      logOnce('SCHEDULE_UPDATED', 'Jadwal berhasil diperbarui:', result);
+      return result;
+    } catch (error) {
+      errorOnce('UPDATE_SCHEDULE_ERROR', 'Gagal memperbarui jadwal:', error.message);
+      throw error;
+    }
+  }, [hookUpdateSchedule]);
+
+  const deleteJadwal = useCallback(async (scheduleId) => {
+    try {
+      await hookDeleteSchedule(scheduleId);
+      logOnce('SCHEDULE_DELETED', 'Jadwal berhasil dihapus');
+      return true;
+    } catch (error) {
+      errorOnce('DELETE_SCHEDULE_ERROR', 'Gagal menghapus jadwal:', error.message);
+      throw error;
+    }
+  }, [hookDeleteSchedule]);
+
+  const toggleScheduleStatus = useCallback(async (scheduleId) => {
+    try {
+      const result = await hookToggleScheduleStatus(scheduleId);
+      logOnce('SCHEDULE_TOGGLED', 'Status jadwal berhasil diubah:', result);
+      return result;
+    } catch (error) {
+      errorOnce('TOGGLE_SCHEDULE_ERROR', 'Gagal mengubah status jadwal:', error.message);
+      throw error;
+    }
+  }, [hookToggleScheduleStatus]);
+
+  const fetchSchedules = useCallback(async () => {
+    try {
+      await hookFetchSchedules();
+    } catch (error) {
+      errorOnce('FETCH_SCHEDULES_ERROR', 'Failed to fetch schedules:', error.message);
+    }
+  }, [hookFetchSchedules]);
 
   // Data verification hooks
   const {
@@ -463,9 +541,7 @@ const Dashboard = () => {
   // Setup device monitoring with real-time updates
   useEffect(() => {
     // Register the real-time data callback to update local data
-    const cleanup = safeRegisterCallback(handleRealTimeDataUpdate);    // Initialize data
-    safeFetchLatestSensorData();
-    safeFetchDeviceStatus();
+    const cleanup = safeRegisterCallback(handleRealTimeDataUpdate);
 
     // Do an initial check on component mount
     checkDeviceStatus();
@@ -473,30 +549,75 @@ const Dashboard = () => {
     // Periodic checks - only check status, not fetch all data (to reduce load)
     const statusInterval = setInterval(checkDeviceStatus, 10000);
 
-    // Return cleanup function
     return () => {
       cleanup(); // Use the cleanup function returned from safeRegisterCallback
       clearInterval(statusInterval);
     };
-  }, [safeRegisterCallback, handleRealTimeDataUpdate, safeFetchLatestSensorData,
-    safeFetchDeviceStatus, checkDeviceStatus]);
-
-  // Add optimization for sensor data fetches
+    // Remove function references from dependencies to prevent loops
+  }, [checkDeviceStatus, handleRealTimeDataUpdate, safeRegisterCallback]);
+  // Fix initial data load effect
   useEffect(() => {
-    // Initial data load
-    safeFetchLatestSensorData();
-    safeFetchDeviceStatus();
+    // Only try to fetch data if we're online
+    if (navigator.onLine) {
+      const loadData = async () => {
+        try {
+          // Only call functions if they exist and log errors silently
+          if (typeof fetchLatestSensorData === 'function') {
+            fetchLatestSensorData().catch(() => { });
+          }
 
-    // Use a less frequent interval for background refreshes
-    const refreshInterval = setInterval(() => {
-      if (!isOffline && navigator.onLine) {
-        safeFetchLatestSensorData();
-        safeFetchDeviceStatus();
+          if (typeof fetchDeviceStatus === 'function') {
+            fetchDeviceStatus().catch(() => { });
+          }
+
+          // Fetch schedules on initial load
+          await fetchSchedules();
+        } catch (err) {
+          // Silent error handling
+        }
+      };
+
+      loadData();
+    }
+  }, [fetchLatestSensorData, fetchDeviceStatus, fetchSchedules]); // Include dependencies
+
+  // Replace sensor data polling with a properly controlled interval
+  useEffect(() => {
+    // Don't set up polling if we're offline
+    if (isOffline || !navigator.onLine) return;
+
+    // Keep track if the component is mounted
+    let isMounted = true;
+
+    const pollData = async () => {
+      if (!isMounted) return;
+
+      try {
+        // Only call functions if they exist and handle errors silently
+        if (typeof fetchLatestSensorData === 'function') {
+          await fetchLatestSensorData().catch(() => { });
+        }
+
+        if (typeof fetchDeviceStatus === 'function') {
+          await fetchDeviceStatus().catch(() => { });
+        }
+      } catch (err) {
+        // Silent error handling
       }
-    }, 30000);  // 30 seconds refresh interval
+    };
 
-    return () => clearInterval(refreshInterval);
-  }, [safeFetchLatestSensorData, safeFetchDeviceStatus, isOffline]);
+    // Initial poll
+    pollData();
+
+    // Set up interval for subsequent polls
+    const refreshInterval = setInterval(pollData, 30000); // 30 seconds refresh
+
+    // Clean up on unmount
+    return () => {
+      isMounted = false;
+      clearInterval(refreshInterval);
+    };
+  }, [isOffline]); // Only re-run if offline status changes
 
   // Add data refresh debouncing - once per 10 seconds at most
   const debouncedRefresh = useCallback(() => {
@@ -559,6 +680,17 @@ const Dashboard = () => {
                 </svg>
                 Clear Cache
               </button>
+              {activeTab === "jadwal" && (
+                <button
+                  onClick={() => setShowAddScheduleModal(true)}
+                  className="px-3 py-1.5 bg-green-500 bg-opacity-80 text-white text-sm font-medium rounded-md hover:bg-opacity-100 transition-colors flex items-center"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                  </svg>
+                  Tambah Jadwal
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -606,9 +738,23 @@ const Dashboard = () => {
 
         {activeTab === "perangkat" && (
           <PerangkatSection devices={devices} deviceStatus={deviceStatus} isConnected={isConnected} />
+        )}        {activeTab === "jadwal" && (
+          <JadwalSection
+            schedules={hookSchedules}
+            scheduleLoading={hookScheduleLoading}
+            scheduleError={hookScheduleError}
+            devices={devices}
+            devicesLoading={dataLoading?.devices || false}
+            onAddSchedule={tambahJadwal}
+            onUpdateSchedule={updateJadwal}
+            onDeleteSchedule={deleteJadwal}
+            onToggleScheduleStatus={toggleScheduleStatus}
+            onRefreshSchedules={fetchSchedules}
+            onRefreshDevices={fetchDevices}
+            showAddModal={showAddScheduleModal}
+            setShowAddModal={setShowAddScheduleModal}
+          />
         )}
-
-        {activeTab === "jadwal" && <JadwalSection />}
       </div>
     </div>
   );

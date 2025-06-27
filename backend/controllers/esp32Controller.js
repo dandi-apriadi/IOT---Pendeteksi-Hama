@@ -5,6 +5,7 @@ import { Device } from "../models/tableModel.js";
 import EnergyTrend from "../models/energyTrendModel.js";
 import { checkSensorAlarms } from "./alarmController.js";
 import { processESP32Data, getDeviceDatabaseId, validateSensorValues } from "../util/dataProcessor.js";
+import Notification from '../models/notificationModel.js';
 
 const { Op } = Sequelize;
 
@@ -98,19 +99,19 @@ async function saveElectricalData(electricalData, dbDeviceId, transaction = null
         }, { transaction });
 
         // Log using JSON format for consistency and include validation info
-        console.log(JSON.stringify({
-            event: "ELECTRICAL_DATA_SAVED",
-            timestamp: now.toISOString(),
-            device_id: dbDeviceId,
-            data: {
-                avg_voltage: updatedValues.voltage,
-                avg_current: updatedValues.current,
-                avg_power: updatedValues.power,
-                total_energy: updatedValues.energy,
-                used_cached_values: (validVoltage === 0 || validCurrent === 0),
-                data_points: 1
-            }
-        }, null, 2));
+        // [DISABLED] console.log(JSON.stringify({
+        //     event: "ELECTRICAL_DATA_SAVED",
+        //     timestamp: now.toISOString(),
+        //     device_id: dbDeviceId,
+        //     data: {
+        //         avg_voltage: updatedValues.voltage,
+        //         avg_current: updatedValues.current,
+        //         avg_power: updatedValues.power,
+        //         total_energy: updatedValues.energy,
+        //         used_cached_values: (validVoltage === 0 || validCurrent === 0),
+        //         data_points: 1
+        //     }
+        // }, null, 2));
 
         return energyRecord;
     } catch (error) {
@@ -262,6 +263,12 @@ export const recordSensorData = async (req, res) => {
                 }
             }
 
+            // Notifikasi jika perangkat baru terhubung atau status aktif
+            if (!deviceRecord.last_online || (new Date() - new Date(deviceRecord.last_online)) > 60000) {
+                await notifyDeviceConnected(deviceRecord);
+                await saveEspOnlineNotification(deviceRecord);
+            }
+
             // ALWAYS save electrical data to energy_trends table regardless of sensor status
             // This will now save every 5 seconds for real-time trend analysis
             const energyRecord = await saveElectricalData({
@@ -272,18 +279,21 @@ export const recordSensorData = async (req, res) => {
                 timestamp: processedData.timestamp
             }, deviceRecord.device_id, transaction);
 
-            // Log electrical data saved
+            // Log using JSON format for consistency and include validation info
+            /*
             console.log(`\n========== ELECTRICAL DATA SAVED (REAL-TIME) ==========`);
             console.log(`📊 Device: ${deviceId} | ${new Date().toISOString()}`);
             console.log(`⚡ Voltage: ${processedData.voltage}V | Current: ${processedData.current}A`);
             console.log(`💡 Power: ${processedData.power}W | Energy: ${processedData.energy}Wh`);
             console.log(`================================================\n`);
+            */
 
             // Determine if we should save sensor data based on our filtering rules
             const saveDecision = shouldSaveData(processedData);
 
             // If we shouldn't save sensor data, commit transaction and return early with success message
             if (!saveDecision.shouldSave) {
+                /*
                 console.log(JSON.stringify({
                     log_id: `API-${logId.toString().padStart(6, '0')}`,
                     timestamp: timestamp,
@@ -291,6 +301,7 @@ export const recordSensorData = async (req, res) => {
                     message: 'PIR/Pump data received but not saved to sensors table (electrical data saved)',
                     filter_reason: saveDecision.reason
                 }, null, 2));
+                */
 
                 // Commit the transaction with energy data only
                 await transaction.commit();
@@ -306,6 +317,7 @@ export const recordSensorData = async (req, res) => {
 
             // If we reach here, we need to save sensor data too
             // Log processed data that will be saved to database
+            /*
             console.log(JSON.stringify({
                 log_id: `API-${logId.toString().padStart(6, '0')}`,
                 timestamp: timestamp,
@@ -317,6 +329,7 @@ export const recordSensorData = async (req, res) => {
                     auto_mode: processedData.auto_mode,
                 }
             }, null, 2));
+            */
 
             // Create new sensor reading using processed data with enhanced fields
             let newReading;
@@ -347,9 +360,13 @@ export const recordSensorData = async (req, res) => {
 
                 // Enhanced success log with PIR status highlight
                 if (processedData.pir_status === true) {
+                    /*
                     console.log(`🔴 MOTION DETECTED: Stored data for ${deviceId} (ID: ${newReading.sensor_id})`);
+                    */
                 } else {
+                    /*
                     console.log(`⚡ Stored electrical data: V=${processedData.voltage}V, I=${processedData.current}A, P=${processedData.power}W, E=${processedData.energy}Wh`);
+                    */
                 }
             } catch (sensorError) {
                 console.error("Sensor data creation error:", sensorError.message);
@@ -360,6 +377,7 @@ export const recordSensorData = async (req, res) => {
             await transaction.commit();
 
             // Print a highlighted console message for successful save
+            /*
             const saveReason = saveDecision.reason.toUpperCase().replace(/_/g, ' ');
             const pirStatus = processedData.pir_status ? '⚠️ MOTION DETECTED ⚠️' : 'No Motion';
             console.log(`\n========== SENSOR DATA SAVED (${saveReason}) ==========`);
@@ -367,6 +385,7 @@ export const recordSensorData = async (req, res) => {
             console.log(`📍 PIR Status: ${pirStatus}`);
             console.log(`🚰 Pump: ${processedData.pump_status ? 'ON' : 'OFF'} | Auto: ${processedData.auto_mode ? 'YES' : 'NO'}`);
             console.log(`=================================================\n`);
+            */
 
             // Update in-memory cache with optimized caching strategy
             const cacheEntry = {
@@ -650,12 +669,11 @@ export const getDeviceStatus = async (req, res) => {
 
             if (statusChanged) {
                 console.log(`Device ${deviceId} status changed: ${device.device_status} -> ${isOnline ? 'online' : 'offline'}`);
-            }
-
-            // If device should be online based on recent data
+            }            // If device should be online based on recent data
             if (isOnline) {
                 devices.push({
-                    device_id: deviceId,
+                    device_id: device.device_id, // Use the proper integer ID
+                    device_name: device.device_name, // Use the device name
                     status: 'online',
                     last_seen: mostRecentActivity,
                     location: device.location,
@@ -675,7 +693,8 @@ export const getDeviceStatus = async (req, res) => {
             } else {
                 // If device is offline
                 devices.push({
-                    device_id: deviceId,
+                    device_id: device.device_id, // Use the proper integer ID
+                    device_name: device.device_name, // Use the device name
                     status: 'offline',
                     last_seen: mostRecentActivity,
                     location: device.location,
@@ -890,6 +909,10 @@ export const sendCommandToESP32 = async (req, res) => {
         // Get WebSocket connections from global variable
         const espConnections = global.espConnections;
 
+        // Tambahkan log untuk debugging
+        console.log('[DEBUG] DeviceId from request:', deviceId);
+        console.log('[DEBUG] Online devices:', espConnections ? Array.from(espConnections.keys()) : []);
+
         if (!espConnections || !espConnections.has(deviceId)) {
             return res.status(404).json({
                 status: 'error',
@@ -1044,20 +1067,20 @@ const logESP32DataOnly = (data) => {
 
     // Print ESP32 data objects in JSON format
     if (data && data.device_id && (data.voltage !== undefined || data.current !== undefined)) {
-        console.log(JSON.stringify({
-            type: "ESP32_DATA",
-            timestamp: new Date().toISOString(),
-            device_id: data.device_id,
-            data: {
-                voltage: parseFloat(data.voltage) || 0,
-                current: parseFloat(data.current) || 0,
-                power: parseFloat(data.power) || 0,
-                energy: parseFloat(data.energy) || 0,
-                pir_status: !!data.pir_status,
-                pump_status: !!data.pump_status,
-                auto_mode: !!data.auto_mode
-            }
-        }, null, 2));
+        // [DISABLED] console.log(JSON.stringify({
+        //     type: "ESP32_DATA",
+        //     timestamp: new Date().toISOString(),
+        //     device_id: data.device_id,
+        //     data: {
+        //         voltage: parseFloat(data.voltage) || 0,
+        //         current: parseFloat(data.current) || 0,
+        //         power: parseFloat(data.power) || 0,
+        //         energy: parseFloat(data.energy) || 0,
+        //         pir_status: !!data.pir_status,
+        //         pump_status: !!data.pump_status,
+        //         auto_mode: !!data.auto_mode
+        //     }
+        // }, null, 2));
     }
 };
 
@@ -1151,6 +1174,12 @@ export const processWebSocketData = async (data) => {
                 }, { transaction });
             }
 
+            // Notifikasi jika perangkat baru terhubung atau status aktif
+            if (!deviceRecord.last_online || (new Date() - new Date(deviceRecord.last_online)) > 60000) {
+                await notifyDeviceConnected(deviceRecord);
+                await saveEspOnlineNotification(deviceRecord);
+            }
+
             // ALWAYS save electrical data regardless of sensor status
             // The implementation inside this function is already updated to save every 5 seconds
             const energyRecord = await saveElectricalData({
@@ -1162,9 +1191,11 @@ export const processWebSocketData = async (data) => {
             }, deviceRecord.device_id, transaction);
 
             // Log the electrical data saving
+            /*
             console.log(`\n== WEBSOCKET ELECTRICAL DATA SAVED ==`);
             console.log(`Device: ${deviceId} | ${new Date().toISOString()}`);
             console.log(`V: ${processedData.voltage}V | I: ${processedData.current}A | P: ${processedData.power}W`);
+            */
 
             // Check if we should save sensor data based on filtering rules
             const saveDecision = shouldSaveData(processedData);
@@ -1315,3 +1346,41 @@ const ensureNonEmptyElectricalData = (data, deviceId) => {
 
     return data;
 };
+
+// Fungsi notifikasi jika perangkat berhasil terhubung
+export const notifyDeviceConnected = async (device) => {
+    try {
+        if (!device || !device.device_id) {
+            console.error('[NOTIFIKASI][ERROR] Device info tidak valid:', device);
+            return;
+        }
+        const notif = await Notification.create({
+            type: 'device',
+            title: 'Perangkat Terhubung',
+            message: `Perangkat ${device.device_name || device.device_id || '-'} berhasil terhubung pada ${new Date().toLocaleString('id-ID')}`,
+            device_id: device.device_id
+        });
+        console.log('[NOTIFIKASI][SUKSES][DEVICE ONLINE]', notif.toJSON());
+    } catch (err) {
+        console.error('[NOTIFIKASI][ERROR][DEVICE ONLINE]', err.message);
+    }
+}
+
+// Fungsi untuk selalu menyimpan notifikasi ESP32 online setiap kali dipanggil
+async function saveEspOnlineNotification(deviceRecord) {
+    try {
+        if (!deviceRecord || !deviceRecord.device_id) {
+            console.error('[NOTIFIKASI][ERROR] Device info tidak valid:', deviceRecord);
+            return;
+        }
+        const notif = await Notification.create({
+            type: 'device',
+            title: 'ESP32 Online',
+            device_id: deviceRecord.device_id,
+            message: `ESP32 (${deviceRecord.device_name || deviceRecord.device_id || '-'}) telah terhubung ke server pada ${new Date().toLocaleString('id-ID')}`
+        });
+        console.log('[NOTIFIKASI][SUKSES][ESP32 ONLINE]', notif.toJSON());
+    } catch (err) {
+        console.error('[NOTIFIKASI][ERROR][ESP32 ONLINE]', err.message);
+    }
+}

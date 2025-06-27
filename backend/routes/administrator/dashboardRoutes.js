@@ -11,32 +11,32 @@ const router = express.Router();
 router.get('/api/dashboard/summary', dashboardController.getDashboardSummary);
 
 // Device management routes
-router.get('/api/devices', dashboardController.getAllDevices);
-router.get('/api/devices/:id', dashboardController.getDeviceById);
-router.post('/api/devices', dashboardController.createDevice);
-router.put('/api/devices/:id', dashboardController.updateDevice);
-router.delete('/api/devices/:id', dashboardController.deleteDevice);
-router.put('/api/devices/:id/status', dashboardController.updateDeviceStatus);
+router.get('/devices', dashboardController.getAllDevices);
+router.get('/devices/:id', dashboardController.getDeviceById);
+router.post('/devices', dashboardController.createDevice);
+router.put('/devices/:id', dashboardController.updateDevice);
+router.delete('/devices/:id', dashboardController.deleteDevice);
+router.put('/devices/:id/status', dashboardController.updateDeviceStatus);
 
 // Sensor data routes
-router.get('/api/sensors', dashboardController.getAllSensorData);
-router.get('/api/sensors/device/:deviceId', dashboardController.getSensorDataByDevice);
-router.get('/api/sensors/latest', dashboardController.getLatestSensorData);
-router.post('/api/sensors', dashboardController.recordSensorData);
+router.get('/sensors', dashboardController.getAllSensorData);
+router.get('/sensors/device/:deviceId', dashboardController.getSensorDataByDevice);
+router.get('/sensors/latest', dashboardController.getLatestSensorData);
+router.post('/sensors', dashboardController.recordSensorData);
 
 // Spraying management routes
-router.get('/api/spraying-logs', dashboardController.getSprayingLogs);
-router.get('/api/spraying-logs/device/:deviceId', dashboardController.getSprayingLogsByDevice);
-router.post('/api/spraying/manual/:deviceId', dashboardController.initiateManualSpraying);
-router.put('/api/spraying-logs/:id/complete', dashboardController.completeSprayingLog);
+router.get('/spraying-logs', dashboardController.getSprayingLogs);
+router.get('/spraying-logs/device/:deviceId', dashboardController.getSprayingLogsByDevice);
+router.post('/spraying/manual/:deviceId', dashboardController.initiateManualSpraying);
+router.put('/spraying-logs/:id/complete', dashboardController.completeSprayingLog);
 
 // Notification routes
-router.get('/api/notifications', dashboardController.getNotifications);
-router.put('/api/notifications/:id/read', dashboardController.markNotificationAsRead);
-router.delete('/api/notifications/:id', dashboardController.deleteNotification);
+router.get('/notifications', dashboardController.getNotifications);
+router.put('/notifications/:id/read', dashboardController.markNotificationAsRead);
+router.delete('/notifications/:id', dashboardController.deleteNotification);
 
 // Settings routes
-router.get('/api/settings', dashboardController.getAllSettings);
-router.put('/api/settings/:id', dashboardController.updateSetting);
+router.get('/settings', dashboardController.getAllSettings);
+router.put('/settings/:id', dashboardController.updateSetting);
 
 export default router;

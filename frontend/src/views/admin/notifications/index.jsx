@@ -1,4 +1,6 @@
 import React, { useState } from "react";
+import axios from "axios";
+import useNotifications from "./useNotifications";
 
 const Notifications = () => {
     // Dummy data for notification settings
@@ -11,6 +13,8 @@ const Notifications = () => {
         emailPassword: "password123",
         phone: "+62812345678"
     });
+
+    const { notifications, loading, fetchNotifications } = useNotifications();
 
     // Handle toggling notification methods
     const handleToggleMethod = (method) => {
@@ -42,118 +46,37 @@ const Notifications = () => {
                     <div className="overflow-x-auto">
                         <div className="flex justify-between items-center mb-4">
                             <div>
-                                <span className="bg-red-100 text-red-800 text-xs font-semibold px-2.5 py-0.5 rounded-full">3 Belum Dibaca</span>
+                                <span className="bg-red-100 text-red-800 text-xs font-semibold px-2.5 py-0.5 rounded-full">
+                                    {notifications.filter(n => n.status === 'unread').length} Belum Dibaca
+                                </span>
                             </div>
                             <div className="flex space-x-2">
-                                <button className="text-sm font-medium text-blue-600 hover:text-blue-800">
+                                <button className="text-sm font-medium text-blue-600 hover:text-blue-800" onClick={async () => { await axios.post('/api/notifications/mark-all-read'); fetchNotifications(); }}>
                                     Tandai semua telah dibaca
                                 </button>
-                                <button className="text-sm font-medium text-gray-600 hover:text-gray-800">
+                                <button className="text-sm font-medium text-gray-600 hover:text-gray-800" onClick={async () => { await axios.delete('/api/notifications/delete-all'); fetchNotifications(); }}>
                                     Hapus semua
                                 </button>
                             </div>
                         </div>
-
                         <div className="space-y-4">
-                            {/* Unread notifications */}
-                            <div className="border-l-4 border-red-500 bg-red-50 p-4 rounded-r-lg">
-                                <div className="flex justify-between items-start">
-                                    <div>
-                                        <h4 className="font-medium text-red-800">Peringatan Deteksi Hama Tinggi</h4>
-                                        <p className="text-sm text-gray-700 mt-1">
-                                            Aktivitas hama tidak biasa terdeteksi di Lahan A. Pertimbangkan untuk menyemprot segera.
-                                        </p>
-                                        <p className="text-xs text-gray-500 mt-2">Hari ini, 08:23</p>
+                            {loading ? (
+                                <div className="text-center py-4">Loading...</div>
+                            ) : notifications.length === 0 ? (
+                                <div className="text-center py-4">Tidak ada notifikasi</div>
+                            ) : notifications.map((notif, idx) => (
+                                <div key={notif.id || idx} className={`border-l-4 ${notif.type === 'insect' ? 'border-red-500 bg-red-50' : 'border-gray-300'} p-4 rounded-r-lg`}>
+                                    <div className="flex justify-between items-start">
+                                        <div>
+                                            <h4 className={`font-medium ${notif.type === 'insect' ? 'text-red-800' : 'text-gray-700'}`}>{notif.title}</h4>
+                                            <p className="text-sm text-gray-700 mt-1">{notif.message}</p>
+                                            <p className="text-xs text-gray-500 mt-2">{new Date(notif.timestamp).toLocaleString('id-ID')}</p>
+                                        </div>
                                     </div>
-                                    <button className="text-gray-400 hover:text-gray-500">
-                                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path>
-                                        </svg>
-                                    </button>
                                 </div>
-                            </div>
-
-                            <div className="border-l-4 border-yellow-500 bg-yellow-50 p-4 rounded-r-lg">
-                                <div className="flex justify-between items-start">
-                                    <div>
-                                        <h4 className="font-medium text-yellow-800">Peringatan Baterai Lemah</h4>
-                                        <p className="text-sm text-gray-700 mt-1">
-                                            Tingkat baterai Perangkat #12 di 15%. Mohon ganti atau isi ulang segera.
-                                        </p>
-                                        <p className="text-xs text-gray-500 mt-2">Hari ini, 09:45</p>
-                                    </div>
-                                    <button className="text-gray-400 hover:text-gray-500">
-                                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path>
-                                        </svg>
-                                    </button>
-                                </div>
-                            </div>
-
-                            <div className="border-l-4 border-red-500 bg-red-50 p-4 rounded-r-lg">
-                                <div className="flex justify-between items-start">
-                                    <div>
-                                        <h4 className="font-medium text-red-800">Peringatan Malfungsi Penyemprot</h4>
-                                        <p className="text-sm text-gray-700 mt-1">
-                                            Sistem penyemprotan di Lahan C melaporkan masalah tekanan. Pemeliharaan diperlukan.
-                                        </p>
-                                        <p className="text-xs text-gray-500 mt-2">Kemarin</p>
-                                    </div>
-                                    <button className="text-gray-400 hover:text-gray-500">
-                                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path>
-                                        </svg>
-                                    </button>
-                                </div>
-                            </div>
-
-                            {/* Read notifications */}
-                            <div className="border-l-4 border-gray-300 p-4 rounded-r-lg">
-                                <div className="flex justify-between items-start">
-                                    <div>
-                                        <h4 className="font-medium text-gray-700">Pemeliharaan Terjadwal Selesai</h4>
-                                        <p className="text-sm text-gray-600 mt-1">
-                                            Pemeliharaan mingguan untuk semua perangkat telah berhasil diselesaikan.
-                                        </p>
-                                        <p className="text-xs text-gray-500 mt-2">20 Okt 2023</p>
-                                    </div>
-                                    <button className="text-gray-400 hover:text-gray-500">
-                                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path>
-                                        </svg>
-                                    </button>
-                                </div>
-                            </div>
-
-                            <div className="border-l-4 border-gray-300 p-4 rounded-r-lg">
-                                <div className="flex justify-between items-start">
-                                    <div>
-                                        <h4 className="font-medium text-gray-700">Pembaruan Sistem Tersedia</h4>
-                                        <p className="text-sm text-gray-600 mt-1">
-                                            Versi firmware baru 2.3.1 tersedia untuk perangkat Anda. Klik untuk memperbarui.
-                                        </p>
-                                        <p className="text-xs text-gray-500 mt-2">18 Okt 2023</p>
-                                    </div>
-                                    <button className="text-gray-400 hover:text-gray-500">
-                                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path>
-                                        </svg>
-                                    </button>
-                                </div>
-                            </div>
+                            ))}
                         </div>
-
-                        {/* Pagination */}
-                        <div className="flex justify-between items-center mt-6">
-                            <p className="text-sm text-gray-600">Menampilkan 5 dari 12 notifikasi</p>
-                            <div className="flex space-x-1">
-                                <button className="px-3 py-1 rounded-md bg-gray-100 text-gray-700 hover:bg-gray-200">Sebelumnya</button>
-                                <button className="px-3 py-1 rounded-md bg-red-500 text-white hover:bg-red-600">1</button>
-                                <button className="px-3 py-1 rounded-md bg-gray-100 text-gray-700 hover:bg-gray-200">2</button>
-                                <button className="px-3 py-1 rounded-md bg-gray-100 text-gray-700 hover:bg-gray-200">3</button>
-                                <button className="px-3 py-1 rounded-md bg-gray-100 text-gray-700 hover:bg-gray-200">Berikutnya</button>
-                            </div>
-                        </div>
+                        {/* Pagination can be added here if needed */}
                     </div>
                 </div>
             </div>

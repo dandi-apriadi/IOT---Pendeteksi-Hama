@@ -79,20 +79,10 @@ const EnergyTrend = db.define('energy_trends', {
     freezeTableName: true,
     timestamps: true,
     createdAt: 'created_at',
-    updatedAt: false,
-    indexes: [
+    updatedAt: false, indexes: [
+        // Keep only essential composite index
         {
-            fields: ['device_id']
-        },
-        {
-            fields: ['period_start', 'period_end']
-        },
-        {
-            fields: ['period_type']
-        },
-        // Add index for real-time trend queries
-        {
-            name: 'idx_realtime_device',
+            name: 'idx_device_period',
             fields: ['device_id', 'period_type', 'period_start']
         }
     ]

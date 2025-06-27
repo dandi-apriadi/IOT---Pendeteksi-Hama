@@ -9,6 +9,7 @@ const API_BASE_URL = process.env.REACT_APP_API_URL;
 export function useESP32Data(deviceId = 'ESP32-PUMP-01') {
     // State
     const [sensorData, setSensorData] = useState(null);
+    const [devices, setDevices] = useState([]);
     const [deviceStatus, setDeviceStatus] = useState({});
     const [deviceOnlineStatus, setDeviceOnlineStatus] = useState({});
     const [lastUpdate, setLastUpdate] = useState(null);
@@ -18,7 +19,8 @@ export function useESP32Data(deviceId = 'ESP32-PUMP-01') {
     const [loading, setLoading] = useState({
         latest: false,
         history: false,
-        status: false
+        status: false,
+        devices: false
     });
 
     // WebSocket connection
@@ -118,9 +120,57 @@ export function useESP32Data(deviceId = 'ESP32-PUMP-01') {
         }
     }, [sensorHistory]);
 
+    // Fetch devices
+    const fetchDevices = useCallback(async () => {
+        if (!API_BASE_URL) {
+            console.warn('API_BASE_URL not configured');
+            return [];
+        } try {
+            setLoading(prev => ({ ...prev, devices: true }));
+            console.log('Fetching devices from:', `${API_BASE_URL}/api/dashboard/devices`);
+            const response = await axios.get(`${API_BASE_URL}/api/dashboard/devices`);
+            console.log('Devices response:', response.data);
+
+            if (response.data && response.data.status === 'success') {
+                // Transform data to expected format, same as PerangkatSection
+                const formattedDevices = Array.isArray(response.data.data) ? response.data.data.map(device => ({
+                    device_id: parseInt(device.device_id) || device.device_id, // Ensure it's a number
+                    device_name: device.device_name,
+                    device_status: device.device_status,
+                    status: device.device_status === 'aktif' ? 'online' : 'offline',
+                    location: device.location || 'Unknown',
+                    last_seen: device.last_online,
+                    last_online: device.last_online,
+                    created_at: device.created_at,
+                    updated_at: device.updated_at
+                })) : [];
+
+                console.log('Formatted devices for schedules:', formattedDevices);
+                setDevices(formattedDevices);
+                return formattedDevices;
+            } else {
+                console.warn('Invalid response format or no devices found');
+                setDevices([]);
+                return [];
+            }
+        } catch (error) {
+            console.error('Error fetching devices:', error);
+            errorOnce('FETCH_DEVICES_ERROR', 'Failed to fetch devices:', error.message);
+            return [];
+        } finally {
+            setLoading(prev => ({ ...prev, devices: false }));
+        }
+    }, [API_BASE_URL]);
+
+    // Fetch devices on mount
+    useEffect(() => {
+        fetchDevices();
+    }, [fetchDevices]);
+
     // Return the hook's API
     return {
         sensorData,
+        devices,
         deviceStatus,
         deviceOnlineStatus,
         lastUpdate,
@@ -128,6 +178,7 @@ export function useESP32Data(deviceId = 'ESP32-PUMP-01') {
         isConnected,
         isOffline,
         loading,
-        registerRealTimeCallback
+        registerRealTimeCallback,
+        fetchDevices
     };
 }

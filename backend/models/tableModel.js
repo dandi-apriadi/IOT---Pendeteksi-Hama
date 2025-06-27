@@ -12,11 +12,10 @@ const Device = db.define('devices', {
         primaryKey: true,
         autoIncrement: true,
         allowNull: false
-    },
-    device_name: {
+    }, device_name: {
         type: DataTypes.STRING(100),
-        allowNull: false,
-        unique: true // This creates an index
+        allowNull: false
+        // Removed unique constraint to avoid extra index
     },
     device_status: {
         type: DataTypes.ENUM('aktif', 'nonaktif'),

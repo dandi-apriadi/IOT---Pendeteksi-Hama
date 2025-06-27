@@ -1,5 +1,6 @@
 import express from 'express';
 import { Device, SprayingLog, Notification, Setting } from "../models/tableModel.js";
+import Schedule from "../models/scheduleModel.js";
 import { Op } from "sequelize";
 
 const router = express.Router();
@@ -93,6 +94,29 @@ router.get('/api/settings', async (req, res) => {
         return res.status(500).json({
             status: 'error',
             message: 'Failed to retrieve settings',
+            error: error.message
+        });
+    }
+});
+
+// Get all schedules
+router.get('/api/all/schedules', async (req, res) => {
+    try {
+        const schedules = await Schedule.findAll({
+            order: [['created_at', 'DESC']],
+            include: [{ model: Device, attributes: ['device_name', 'location'] }]
+        });
+
+        return res.json({
+            status: 'success',
+            message: 'All schedules retrieved successfully',
+            data: schedules
+        });
+    } catch (error) {
+        console.error('Error fetching schedules:', error);
+        return res.status(500).json({
+            status: 'error',
+            message: 'Failed to retrieve schedules',
             error: error.message
         });
     }

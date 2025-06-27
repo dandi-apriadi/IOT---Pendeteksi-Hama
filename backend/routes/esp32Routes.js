@@ -1,6 +1,7 @@
 import express from 'express';
 import * as esp32Controller from "../controllers/esp32Controller.js";
 import * as sensorDataController from "../controllers/sensorDataController.js";
+import { getAllSensorData } from '../controllers/sensorDataController.js';
 
 const router = express.Router();
 
@@ -154,5 +155,8 @@ router.get('/dashboard-summary/:deviceId', async (req, res) => {
         });
     }
 });
+
+// Route untuk mengambil semua data sensor (data mentah)
+router.get('/data/all', getAllSensorData);
 
 export default router;

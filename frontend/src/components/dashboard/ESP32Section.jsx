@@ -391,9 +391,8 @@ const ESP32Section = ({
                                         </svg>
                                     </div>
                                     <div>
-                                        <div className="text-xs font-medium text-indigo-500 uppercase tracking-wider group-hover:text-indigo-600 transition-all">Device ID</div>
-                                        <div className="text-gray-800 font-mono text-sm group-hover:text-black transition-all">
-                                            {devices?.find(d => d.device_id?.includes('ESP32'))?.device_id || 'ESP32-PUMP-01'}
+                                        <div className="text-xs font-medium text-indigo-500 uppercase tracking-wider group-hover:text-indigo-600 transition-all">Device ID</div>                                        <div className="text-gray-800 font-mono text-sm group-hover:text-black transition-all">
+                                            {devices?.find(d => d.device_name?.includes('ESP32'))?.device_name || 'ESP32-PUMP-01'}
                                         </div>
                                     </div>
                                 </div>
@@ -409,9 +408,8 @@ const ESP32Section = ({
                                         </svg>
                                     </div>
                                     <div>
-                                        <div className="text-xs font-medium text-blue-500 uppercase tracking-wider group-hover:text-blue-600 transition-all">Location</div>
-                                        <div className="text-gray-800 text-sm group-hover:text-black transition-all">
-                                            {devices?.find(d => d.device_id?.includes('ESP32'))?.location || 'Default location'}
+                                        <div className="text-xs font-medium text-blue-500 uppercase tracking-wider group-hover:text-blue-600 transition-all">Location</div>                                        <div className="text-gray-800 text-sm group-hover:text-black transition-all">
+                                            {devices?.find(d => d.device_name?.includes('ESP32'))?.location || 'Default location'}
                                         </div>
                                     </div>
                                 </div>
@@ -667,16 +665,7 @@ const ESP32Section = ({
                                             </div>
                                         </div>
 
-                                        {/* Trends Section */}
-                                        <div className="mt-4 border-t border-blue-100 pt-4">                                            <div className="flex items-center justify-between mb-3">
-                                            <h5 className="text-xs font-medium text-gray-500">ELECTRICAL TRENDS (5-SECOND UPDATES)</h5>
-                                        </div>                                            {/* Placeholder for mini trend chart - will be replaced with actual chart */}
-                                            <div className="h-20 bg-gray-50 rounded-lg flex items-center justify-center">
-                                                <div className="text-gray-400 text-xs">
-                                                    Trend visualization coming soon
-                                                </div>
-                                            </div>
-                                        </div>
+                                        {/* Trends Section removed */}
                                     </div>
                                 </div>                            </div>
                         </div>

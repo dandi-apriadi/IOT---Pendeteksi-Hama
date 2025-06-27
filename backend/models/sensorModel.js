@@ -1,6 +1,7 @@
 import { Sequelize } from "sequelize";
 import db from "../config/Database.js";
 import moment from "moment";
+import { Device } from './tableModel.js';
 
 const { DataTypes } = Sequelize;
 
@@ -81,41 +82,15 @@ const Sensor = db.define('sensors', {
     freezeTableName: true,
     timestamps: true,
     createdAt: 'created_at',
-    updatedAt: false,
-    indexes: [
-        // Basic indexes for common queries
-        {
-            name: 'idx_device_id',
-            fields: ['device_id']
-        },
-        {
-            name: 'idx_timestamp',
-            fields: ['timestamp']
-        },
-        // Specialized index for real-time queries with device ID and timestamp
+    updatedAt: false, indexes: [
+        // Only keep essential indexes to avoid MySQL key limit
         {
             name: 'idx_device_timestamp',
             fields: ['device_id', 'timestamp']
         },
-        // Add specialized index for latest data queries
         {
             name: 'idx_timestamp_desc',
             fields: [{ attribute: 'timestamp', order: 'DESC' }]
-        },
-        // Add index for pump status queries
-        {
-            name: 'idx_pump_status',
-            fields: ['pump_status']
-        },
-        // Add index for combined filtering
-        {
-            name: 'idx_device_pump',
-            fields: ['device_id', 'pump_status']
-        },
-        // Add index for date range with device_id for efficient history queries
-        {
-            name: 'idx_device_date_range',
-            fields: ['device_id', 'timestamp']
         }
     ],
     // Add table options for better performance with time-series data
@@ -124,5 +99,7 @@ const Sensor = db.define('sensors', {
     collate: 'utf8mb4_unicode_ci',
     comment: 'Stores ESP32 sensor readings with time-series optimization'
 });
+
+Sensor.belongsTo(Device, { foreignKey: 'device_id', as: 'device' });
 
 export default Sensor;

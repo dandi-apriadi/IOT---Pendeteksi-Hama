@@ -82,23 +82,11 @@ const Alarm = db.define('alarms', {
     freezeTableName: true,
     timestamps: true,
     createdAt: 'created_at',
-    updatedAt: false,
-    indexes: [
+    updatedAt: false, indexes: [
+        // Keep only essential indexes
         {
-            name: 'idx_alarm_device',
-            fields: ['device_id']
-        },
-        {
-            name: 'idx_alarm_timestamp',
-            fields: ['timestamp']
-        },
-        {
-            name: 'idx_alarm_status',
-            fields: ['status']
-        },
-        {
-            name: 'idx_alarm_severity',
-            fields: ['severity']
+            name: 'idx_alarm_device_timestamp',
+            fields: ['device_id', 'timestamp']
         }
     ]
 });

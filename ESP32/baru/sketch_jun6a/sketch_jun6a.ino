@@ -14,6 +14,8 @@
 #include <RTClib.h>
 #include <LiquidCrystal_I2C.h>
 #include <Ticker.h>  // Add Ticker library for timers
+#include <WiFiUdp.h>
+#include <NTPClient.h>
 
 // Add these headers for debugging and watchdog
 #include <esp_task_wdt.h>
@@ -21,14 +23,11 @@
 #include <esp_err.h>
 
 // WiFi credentials
-const char* ssid = "esta";
-const char* password = "1234567890";
+const char* ssid = "Onesta";
+const char* password = "123456788";
 
 // Server configuration
-// NOTE: Change serverHost to your actual server IP address
-// For local development: use your computer's local IP (e.g., "192.168.1.100")
-// For production: use your server's public IP or domain name
-const char* serverHost = "192.168.207.169";  // Replace with your server IP
+const char* serverHost = "192.168.1.5";  // Replace with your server IP
 const int serverPort = 5000;  // Should match backend PORT environment variable
 const char* httpEndpoint = "/api/esp32/data";
 const char* wsEndpoint = "/ws";
@@ -124,6 +123,11 @@ SemaphoreHandle_t pirNotifySemaphore;
 volatile bool motionDetected = false;
 volatile bool motionNotificationPending = false;
 
+// NTP Client setup
+WiFiUDP ntpUDP;
+// Ganti offset ke GMT+8 (8*3600=28800 detik)
+NTPClient timeClient(ntpUDP, "pool.ntp.org", 8 * 3600, 60000); // GMT+8, update every 60s
+
 // ---- FUNCTION PROTOTYPES (FORWARD DECLARATIONS) ----
 // This ensures all functions are visible before they're used
 void updateLogTimestamp();
@@ -154,6 +158,7 @@ void handlePumpAutomation();
 void checkConnections();
 void updateNextPumpTime();
 void updateDisplays();
+void syncRTCWithNTP();
 
 // ---- FUNCTION IMPLEMENTATIONS ----
 
@@ -392,15 +397,15 @@ void improvedPzemInitialization() {
     
     if (!isnan(testVoltage) && testVoltage > 0) {
       initialized = true;
-      Serial.println("PZEM initialization successful!");
-      Serial.printf("Test voltage reading: %.2f V\n", testVoltage);
+      // Serial.println("PZEM initialization successful!");
+      // Serial.printf("Test voltage reading: %.2f V\n", testVoltage);
       
       float testCurrent = pzem.current();
       float testPower = pzem.power();
       float testEnergy = pzem.energy();
       
-      Serial.printf("Initial readings - V:%.2f, I:%.3f, P:%.2f, E:%.3f\n", 
-                   testVoltage, testCurrent, testPower, testEnergy);
+      // Serial.printf("Initial readings - V:%.2f, I:%.3f, P:%.2f, E:%.3f\n", 
+      //              testVoltage, testCurrent, testPower, testEnergy);
       
       if (!isnan(testVoltage)) lastValid.voltage = testVoltage;
       if (!isnan(testCurrent)) lastValid.current = testCurrent;
@@ -413,9 +418,9 @@ void improvedPzemInitialization() {
     } else {
       retries++;
       
-      Serial.print("PZEM init attempt ");
-      Serial.print(retries);
-      Serial.println(" failed, retrying...");
+      // Serial.print("PZEM init attempt ");
+      // Serial.print(retries);
+      // Serial.println(" failed, retrying...");
       
       lcd1.setCursor(0, 1);
       lcd1.print("PZEM Retry #");
@@ -423,7 +428,7 @@ void improvedPzemInitialization() {
       lcd1.print("  ");
       
       if (retries % 3 == 0) {
-        Serial.println("Resetting PZEM serial connection...");
+        // Serial.println("Resetting PZEM serial connection...");
         Serial2.end();
         delay(500);
         Serial2.begin(9600, SERIAL_8N1, PZEM_RX_PIN, PZEM_TX_PIN);
@@ -435,7 +440,7 @@ void improvedPzemInitialization() {
   }
   
   if (!initialized) {
-    Serial.println("WARNING: Failed to initialize PZEM after multiple attempts");
+    // Serial.println("WARNING: Failed to initialize PZEM after multiple attempts");
     lcd1.setCursor(0, 1);
     lcd1.print("PZEM Failed!   ");
   }
@@ -526,24 +531,33 @@ void readSensorData() {
 void connectToWiFi() {
   lcd1.setCursor(0, 1); lcd1.print("Connecting WiFi...");
   lcd2.setCursor(0, 0); lcd2.print("WiFi Connecting");
-  
   WiFi.begin(ssid, password);
-  
   int attempts = 0;
   while (WiFi.status() != WL_CONNECTED && attempts < 20) {
     delay(500);
     Serial.print(".");
     attempts++;
   }
-
   if (WiFi.status() == WL_CONNECTED) {
     wifiConnected = true;
     Serial.println();
     Serial.print("Connected to WiFi: ");
     Serial.println(WiFi.localIP());
-    
     lcd1.setCursor(0, 1); lcd1.print("WiFi Connected      ");
     lcd2.setCursor(0, 0); lcd2.print("WiFi: OK        ");
+    // Sinkronisasi RTC dengan NTP setelah WiFi terhubung
+    syncRTCWithNTP();
+    // Tampilkan semua data penting di serial dan LCD setelah WiFi connect
+    /*Serial.println("==== DEVICE INFO ====");
+    Serial.print("Device ID: "); Serial.println(deviceId);
+    Serial.print("Location: "); Serial.println(deviceLocation);
+    Serial.print("IP Address: "); Serial.println(WiFi.localIP());
+    Serial.print("Server: "); Serial.print(serverHost); Serial.print(":"); Serial.println(serverPort);
+    Serial.print("PZEM Simulasi: "); Serial.println(simulatePZEM ? "YA" : "TIDAK");
+    Serial.println("=====================");*/
+    lcd1.setCursor(0, 0); lcd1.print("ID:"); lcd1.print(deviceId);
+    lcd1.setCursor(0, 2); lcd1.print("Lokasi:"); lcd1.print(deviceLocation);
+    lcd1.setCursor(0, 3); lcd1.print("IP:"); lcd1.print(WiFi.localIP());
   } else {
     wifiConnected = false;
     lcd1.setCursor(0, 1); lcd1.print("WiFi Failed!        ");
@@ -644,9 +658,9 @@ void sendDataViaHTTP() {
     int httpResponseCode = http.POST(jsonString);
     
     if (httpResponseCode > 0) {
-      Serial.printf("HTTP Response: %d\n", httpResponseCode);
+      // Serial.printf("HTTP Response: %d\n", httpResponseCode);
     } else {
-      Serial.printf("HTTP Error: %d\n", httpResponseCode);
+      // Serial.printf("HTTP Error: %d\n", httpResponseCode);
     }
     
     http.end();
@@ -659,16 +673,19 @@ void activatePump() {
   digitalWrite(pumpPin, HIGH);
   pumpStartTime = millis();
   pumpActive = true;
-  
-  Serial.println("Pump activated");
+
+  // Serial.println("Pump activated");
   sendPumpStatusUpdate(true);
+
+  // Tambahkan notifikasi jika pump berhasil ON
+  logNotification("PUMP", "Pump berhasil ON");
 }
 
 void deactivatePump() {
   digitalWrite(pumpPin, LOW);
   pumpActive = false;
   
-  Serial.println("Pump deactivated");
+  // Serial.println("Pump deactivated");
   sendPumpStatusUpdate(false);
 }
 
@@ -700,11 +717,11 @@ void checkConnections() {
     if (wifiConnected) {
       wifiConnected = false;
       serverConnected = false;
-      Serial.println("WiFi disconnected");
+      // Serial.println("WiFi disconnected");
     }
     
     if (millis() - lastReconnectAttempt >= reconnectInterval) {
-      Serial.println("Attempting WiFi reconnection...");
+      // Serial.println("Attempting WiFi reconnection...");
       connectToWiFi();
       
       if (wifiConnected) {
@@ -927,19 +944,19 @@ void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
   // Handle WebSocket events with better protection
   switch(type) {
     case WStype_DISCONNECTED:
-      Serial.println("WebSocket disconnected");
+      // Serial.println("WebSocket disconnected");
       serverConnected = false;
       break;
       
     case WStype_CONNECTED:
-      Serial.println("WebSocket connected");
+      // Serial.println("WebSocket connected");
       serverConnected = true;
       
       // Send simplified registration message
       try {
         webSocket.sendTXT("{\"type\":\"device_register\",\"device_id\":\"" + deviceId + "\"}");
       } catch (...) {
-        Serial.println("Error sending registration message");
+        // Serial.println("Error sending registration message");
       }
       break;
       
@@ -977,15 +994,11 @@ void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
 void handleServerCommand(const char* message) {
   // Introduce artificial delay to slow down command processing
   delay(5);
-  
-  // Create a more descriptive log of incoming commands
-  Serial.print("Command received: ");
-  Serial.println(message);
-  
+
   // Parse and execute server commands
   DynamicJsonDocument doc(256);
   DeserializationError error = deserializeJson(doc, message);
-  
+
   if (!error) {
     // Check for command ID to prevent duplicates
     String commandId = doc["command_id"] | "";
@@ -994,35 +1007,37 @@ void handleServerCommand(const char* message) {
       return;
     }
     lastCommandID = commandId;
-    
+
     // Process command
     const char* command = doc["command"];
     if (!command) {
-      Serial.println("Invalid command format - missing 'command' field");
       return;
     }
-    
+
     if (strcmp(command, "set_mode") == 0) {
       int mode = doc["mode"];
       isAutoMode = (mode == 1);
       manualPump = !isAutoMode;
-      
       logMessage("COMMAND", isAutoMode ? "Auto mode enabled" : "Manual mode enabled");
     } else if (strcmp(command, "toggle_pump") == 0) {
       manualPump = !manualPump;
       pumpActive = manualPump;
-      
       digitalWrite(pumpPin, pumpActive ? HIGH : LOW);
       logMessage("COMMAND", pumpActive ? "Pump activated" : "Pump deactivated");
+    } else if (strcmp(command, "pump_on") == 0) {
+      activatePump();
+      lcd1.setCursor(0, 3);
+      lcd1.print("POMPA: ON         ");
+      logMessage("COMMAND", "Pump ON via server");
+    } else if (strcmp(command, "pump_off") == 0) {
+      deactivatePump();
+      lcd1.setCursor(0, 3);
+      lcd1.print("POMPA: OFF        ");
+      logMessage("COMMAND", "Pump OFF via server");
     } else {
       logMessage("COMMAND", "Unknown command");
     }
-  } else {
-    Serial.print("Failed to parse server command: ");
-    Serial.println(error.c_str());
   }
-  
-  // Force memory cleanup
   doc.clear();
 }
 
@@ -1072,14 +1087,14 @@ void setup() {
   rtcAvailable = rtc.begin();
   
   if (!rtcAvailable) {
-    Serial.println("RTC not found or not working");
+    // Serial.println("RTC not found or not working");
     lcd1.setCursor(0, 1); lcd1.print("RTC ERROR!");
     lcd2.setCursor(0, 1); lcd2.print("RTC ERROR!");
     delay(2000); // Show error but continue
   } else {
     // Check if the RTC lost power and reset time if needed
     if (rtc.lostPower()) {
-      Serial.println("RTC lost power, setting time to compile time");
+      // Serial.println("RTC lost power, setting time to compile time");
       lcd1.setCursor(0, 1); lcd1.print("RTC Reset");
       // Set the RTC to the date & time this sketch was compiled
       rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
@@ -1090,41 +1105,30 @@ void setup() {
   lcd1.begin(20, 4);
   lcd1.backlight(); lcd1.clear();
   lcd1.setCursor(0, 0); lcd1.print("Inisialisasi...");
-
-  lcd2.begin(16, 2);
+  lcd2.begin(16, 2); // Tidak perlu if (!lcd2.begin(...))
   lcd2.backlight(); lcd2.clear();
   lcd2.setCursor(0, 0); lcd2.print("Starting...");
-
   pinMode(pumpPin, OUTPUT);
-  pinMode(pirPin, INPUT_PULLUP); // Use pullup for better reliability
+  pinMode(pirPin, INPUT_PULLUP);
   digitalWrite(pumpPin, LOW);
-  
-  // Create semaphore for PIR notifications
   pirNotifySemaphore = xSemaphoreCreateBinary();
-  
-  // Add interrupt with highest priority
   attachInterrupt(digitalPinToInterrupt(pirPin), handlePirInterrupt, CHANGE);
-  
   sensorDataMutex = xSemaphoreCreateMutex();
   lastValid = {0, 0, 0, 0, 0};
-  
   if (simulatePZEM) {
     lcd1.setCursor(0, 1);
     lcd1.print("PZEM: SIMULATED");
-    Serial.println("PZEM simulation mode active");
+    // Serial.println("PZEM simulation mode active");
   } else {
     improvedPzemInitialization();
   }
-
   connectToWiFi();
-  
   if (wifiConnected) {
     initWebSocket();
   }
-
   lcd1.clear();
   lcd2.clear();
-  Serial.println("Setup completed");
+  // Serial.println("Setup completed");
 }
 
 void loop() {
@@ -1173,6 +1177,8 @@ void loop() {
     if (!motionDetected) {
       updateDisplays();
     }
+    // Selalu update electrical monitoring di LCD2
+    updateElectricalMonitoringDisplay();
     lastDisplayTime = currentMillis;
   }
   
@@ -1185,11 +1191,43 @@ void loop() {
   static unsigned long lastMemReport = 0;
   if (currentMillis - lastMemReport >= 30000) {
     uint32_t currentHeap = ESP.getFreeHeap();
-    Serial.printf("Memory - Current: %u bytes, Lowest: %u bytes (%.1f%% of boot)\n", 
-                 currentHeap, lowestFreeHeap, (lowestFreeHeap * 100.0) / freeHeapAtBoot);
+    // Serial.printf("Memory - Current: %u bytes, Lowest: %u bytes (%.1f%% of boot)\n", 
+    //              currentHeap, lowestFreeHeap, (lowestFreeHeap * 100.0) / freeHeapAtBoot);
     lastMemReport = currentMillis;
   }
   
   // Use a longer delay to reduce CPU usage
   delay(10); // 10ms delay instead of micros delay
 }
+
+// Sinkronisasi RTC dengan NTP agar jam selalu akurat
+void syncRTCWithNTP() {
+  timeClient.begin();
+  if (timeClient.forceUpdate()) {
+    unsigned long epochTime = timeClient.getEpochTime();
+    if (epochTime > 1600000000) { // Valid epoch
+      DateTime ntpTime = DateTime(epochTime);
+      rtc.adjust(ntpTime);
+      // Serial.print("RTC updated from NTP: ");
+      // Serial.println(timeClient.getFormattedTime());
+    }
+  } else {
+    // Serial.println("NTP sync failed");
+  }
+  timeClient.end();
+}
+
+// Tambahkan log khusus untuk notifikasi
+void logNotification(const char* notifType, const char* notifMsg) {
+  updateLogTimestamp();
+  Serial.print("[NOTIF] ");
+  Serial.print(logTimeBuffer);
+  Serial.print(" | ");
+  Serial.print(notifType);
+  Serial.print(": ");
+  Serial.println(notifMsg);
+}
+
+// Contoh penggunaan logNotification:
+// logNotification("DEVICE ONLINE", "Device berhasil terhubung ke server");
+// logNotification("INSECT/MOTION", "Deteksi gerakan/insect terdeteksi oleh PIR");

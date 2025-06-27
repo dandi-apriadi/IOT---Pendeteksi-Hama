@@ -3,6 +3,7 @@ import moment from 'moment';
 import Sensor from '../models/sensorModel.js';
 import { Device } from '../models/tableModel.js';
 import EnergyTrend from '../models/energyTrendModel.js';
+import Notification from '../models/notificationModel.js';
 
 const { Op } = Sequelize;
 
@@ -930,6 +931,58 @@ export const getPowerConsumptionStats = async (req, res) => {
 };
 
 /**
+ * Ambil semua data sensor dari database (untuk kebutuhan analisis/data mentah)
+ */
+export const getAllSensorData = async (req, res) => {
+    try {
+        // Ambil semua data sensor
+        const rawData = await Sensor.findAll({
+            include: [{ model: Device, attributes: ['device_name', 'location'], as: 'device' }],
+            order: [['timestamp', 'DESC']]
+        });
+
+        // Algoritma deteksi gerak serangga:
+        // Jika ada 30 gerakan (pir_status true) dalam 30 detik, anggap sebagai gerakan serangga
+        const result = [];
+        let window = [];
+        for (let i = 0; i < rawData.length; i++) {
+            const item = rawData[i];
+            if (item.pir_status) {
+                window.push(item);
+                // Hapus data di luar 5 detik dari window (untuk uji coba)
+                const baseTime = new Date(item.timestamp).getTime();
+                window = window.filter(d => (baseTime - new Date(d.timestamp).getTime()) <= 5000);
+                if (window.length >= 30) {
+                    // Hanya tambahkan satu entri untuk satu deteksi serangga
+                    result.push({
+                        ...item.toJSON(),
+                        insect_detected: true
+                    });
+                    // Kirim notifikasi jika deteksi serangga
+                    await notifyInsectDetection({
+                        device: item.device,
+                        device_id: item.device_id,
+                        timestamp: item.timestamp
+                    });
+                    // Log ke database juga untuk uji coba
+                    await Notification.create({
+                        type: 'debug',
+                        title: 'Debug Notifikasi',
+                        message: `Notifikasi debug pada ${item.timestamp} device ${item.device_id}`
+                    });
+                    // Kosongkan window agar tidak spam notifikasi
+                    window = [];
+                }
+            }
+        }
+        res.json({ status: 'success', data: result });
+    } catch (error) {
+        console.error('Error in getAllSensorData:', error);
+        res.status(500).json({ status: 'error', message: error.message });
+    }
+};
+
+/**
  * Internal version of getElectricalChartData that returns data object directly
  * Used for combined dashboard endpoints
  * @param {string} deviceId - Device ID to fetch data for
@@ -1027,7 +1080,7 @@ export const getElectricalChartDataInternal = async (deviceId, timeframe) => {
         SELECT 
           DATE_FORMAT(period_start, '%Y-%m-%d %H:%i:00') as time,
           ROUND(AVG(avg_voltage), 1) as voltage,
-          ROUND(AVG(avg_current), 3) as current, 
+          ROUND(AVG(avg_current) * 1000, 2) as current, 
           ROUND(AVG(avg_power), 1) as power,
           SUM(total_energy) as energy,
           SUM(pump_active_duration) > 0 as pump_active
@@ -1287,5 +1340,48 @@ export const getLatestEnergyDataInternal = async (deviceId) => {
     } catch (error) {
         console.error('Error in getLatestEnergyDataInternal:', error);
         return { error: error.message };
+    }
+};
+
+/**
+ * --- NOTIFICATION LOGIC ---
+ */
+
+/**
+ * Create a notification for insect detection
+ * @param {Object} detectionEvent - The detection event data
+ * @param {Object} detectionEvent.device - The device object
+ * @param {string} detectionEvent.device_id - The device ID
+ * @param {Date} detectionEvent.timestamp - The detection timestamp
+ */
+export const notifyInsectDetection = async (detectionEvent) => {
+    try {
+        const { device, device_id, timestamp } = detectionEvent;
+        const title = 'Deteksi Serangga';
+        const message = `Serangga terdeteksi oleh sensor ${device?.device_name || device_id} di lokasi ${device?.location || '-'} pada ${timestamp}`;
+        await Notification.create({ type: 'insect', title, message, device_id });
+    } catch (err) {
+        console.error('Failed to create insect detection notification:', err.message);
+    }
+};
+
+/**
+ * Create a notification for schedule result
+ * @param {Object} param - The notification parameters
+ * @param {Object} param.device - The device object
+ * @param {string} param.device_id - The device ID
+ * @param {Date} param.timestamp - The schedule execution timestamp
+ * @param {boolean} param.success - Whether the schedule was successful
+ * @param {string} [param.reason] - The reason for failure (if any)
+ */
+export const notifyScheduleResult = async ({ device, device_id, timestamp, success, reason }) => {
+    try {
+        const title = success ? 'Jadwal Berhasil Dijalankan' : 'Jadwal Gagal Dijalankan';
+        const message = success
+            ? `Jadwal berhasil dijalankan pada sensor ${device?.device_name || device_id} di lokasi ${device?.location || '-'} pada ${timestamp}`
+            : `Jadwal gagal dijalankan pada sensor ${device?.device_name || device_id} di lokasi ${device?.location || '-'} pada ${timestamp}. Alasan: ${reason || '-'}`;
+        await Notification.create({ type: 'schedule', title, message });
+    } catch (err) {
+        console.error('Failed to create schedule notification:', err.message);
     }
 };

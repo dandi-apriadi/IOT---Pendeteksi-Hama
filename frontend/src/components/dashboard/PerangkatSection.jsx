@@ -17,14 +17,18 @@ const PerangkatSection = ({ devices, deviceStatus, isConnected, loading, error, 
     // Refs for animation tracking
     const updatingDevices = useRef(new Set());
 
+    // Add state for database devices
+    const [dbDevices, setDbDevices] = useState([]);
+    const [dbLoading, setDbLoading] = useState(false);
+    const [dbError, setDbError] = useState(null);
+    const [dataSource, setDataSource] = useState('realtime'); // 'realtime' or 'database'
+
     // Process devices with real-time status
     useEffect(() => {
-        let result = [...(devices || [])];
-
-        // Apply search filter
+        let result = [...(devices || [])];        // Apply search filter
         if (searchTerm) {
             result = result.filter(device =>
-                device.device_id.toLowerCase().includes(searchTerm.toLowerCase())
+                device.device_name.toLowerCase().includes(searchTerm.toLowerCase())
             );
         }
 
@@ -61,8 +65,11 @@ const PerangkatSection = ({ devices, deviceStatus, isConnected, loading, error, 
         return Math.min(100, Math.max(5, deviceIdSum % 100));
     };
 
-    // New function to fetch latest sensor data for a device
+    // New function to fetch latest sensor data for a device - simplified to avoid unnecessary requests
     const fetchLatestSensorData = async (deviceId) => {
+        // Only fetch data if we're actually connected
+        if (!isConnected) return;
+
         try {
             const response = await axios.get(`${API_BASE_URL}/esp32/data/latest?device_id=${deviceId}`);
             if (response.data && response.data.status === 'success' && response.data.data) {
@@ -88,19 +95,28 @@ const PerangkatSection = ({ devices, deviceStatus, isConnected, loading, error, 
         }
     };
 
-    // Fetch sensor data for all devices on initial load and when devices change
+    // Optimized fetch for initial load - now uses a smarter approach to avoid unnecessary requests
     useEffect(() => {
+        // Only attempt to fetch if we have devices and are connected
         if (devices && devices.length > 0 && isConnected) {
-            devices.forEach(device => {
-                fetchLatestSensorData(device.device_id);
-            });
+            // Only fetch for online devices to reduce unnecessary requests
+            const onlineDevices = devices.filter(device => device.status === 'online');
+            if (onlineDevices.length > 0) {
+                // Stagger requests to avoid overwhelming the server
+                onlineDevices.forEach((device, index) => {
+                    setTimeout(() => {
+                        fetchLatestSensorData(device.device_id);
+                    }, index * 500); // Stagger by 500ms per device
+                });
+            }
         }
     }, [devices, isConnected]);
 
-    // Set up sensor data polling
+    // Set up sensor data polling with optimized logic
     useEffect(() => {
         if (!isConnected) return;
 
+        // Only poll every 10 seconds for better performance
         const pollingInterval = setInterval(() => {
             if (devices && devices.length > 0) {
                 // Only poll for online devices to avoid unnecessary requests
@@ -111,7 +127,7 @@ const PerangkatSection = ({ devices, deviceStatus, isConnected, loading, error, 
                     fetchLatestSensorData(onlineDevices[randomIndex].device_id);
                 }
             }
-        }, 5000); // Poll every 5 seconds
+        }, 10000); // Poll every 10 seconds instead of 5 for better performance
 
         return () => clearInterval(pollingInterval);
     }, [devices, isConnected]);
@@ -148,6 +164,143 @@ const PerangkatSection = ({ devices, deviceStatus, isConnected, loading, error, 
         };
     }, []);
 
+    // Fetch database devices
+    const fetchDatabaseDevices = async () => {
+        try {
+            setDbLoading(true);
+            setDbError(null);
+            // Fix the API endpoint path to use the correct route
+            const response = await axios.get(`${API_BASE_URL}/api/dashboard/devices`);
+            console.log('Database devices response:', response.data);
+            if (response.data && response.data.status === 'success') {
+                console.log('Devices data received:', response.data.data);
+
+                // Transform data to expected format if needed
+                const formattedDevices = Array.isArray(response.data.data) ? response.data.data.map(device => {
+                    // Make sure timestamps are properly processed
+                    console.log(`Device ${device.device_name} last_online:`, device.last_online); return {
+                        device_id: parseInt(device.device_id) || device.device_id, // Ensure it's a number, same as useESP32Data
+                        device_name: device.device_name,
+                        device_status: device.device_status,
+                        status: device.device_status === 'aktif' ? 'online' : 'offline',
+                        location: device.location || 'Unknown',
+                        last_seen: device.last_online,
+                        last_online: device.last_online,
+                        from_database: true,
+                        created_at: device.created_at,
+                        updated_at: device.updated_at
+                    };
+                }) : [];
+
+                setDbDevices(formattedDevices);
+
+                // Log the transformed devices for debugging
+                console.log('Transformed devices:', formattedDevices);
+            } else {
+                throw new Error('Invalid response format');
+            }
+        } catch (err) {
+            console.error('Failed to fetch database devices:', err.message);
+            setDbError('Could not load registered devices from database');
+        } finally {
+            setDbLoading(false);
+        }
+    };
+
+    // Initial fetch of database devices
+    useEffect(() => {
+        fetchDatabaseDevices();
+    }, []);
+
+    // Define applyFilters function BEFORE using it
+    const applyFilters = (devicesList) => {
+        return devicesList.filter(device => {            // Apply search filter
+            if (searchTerm && !device.device_name.toLowerCase().includes(searchTerm.toLowerCase())) {
+                return false;
+            }
+
+            // Apply status filter
+            if (statusFilter !== 'all') {
+                const deviceStatus = device.from_database
+                    ? (device.device_status === 'aktif' ? 'online' : 'offline')
+                    : device.status;
+
+                if (deviceStatus !== statusFilter) {
+                    return false;
+                }
+            }
+
+            // Apply location filter
+            if (locationFilter !== 'all' &&
+                (device.location || '').toLowerCase() !== locationFilter.toLowerCase()) {
+                return false;
+            }
+
+            return true;
+        });
+    };
+
+    // Merge devices data from realtime and database sources
+    const mergedDevices = React.useMemo(() => {
+        // Start with realtime devices
+        let result = [...(devices || [])];        // Add database devices that aren't in the realtime list
+        if (dbDevices.length > 0) {
+            dbDevices.forEach(dbDevice => {
+                const existingDeviceIndex = result.findIndex(
+                    d => d.device_id === dbDevice.device_id
+                ); if (existingDeviceIndex === -1) {
+                    // Add database device (already correctly formatted)
+                    result.push(dbDevice);
+                } else {
+                    // Enhance existing device with database information
+                    result[existingDeviceIndex] = {
+                        ...result[existingDeviceIndex],
+                        location: result[existingDeviceIndex].location || dbDevice.location,
+                        device_status: dbDevice.device_status,
+                        created_at: dbDevice.created_at,
+                        updated_at: dbDevice.updated_at
+                    };
+                }
+            });
+        }
+
+        // Apply filters to the merged devices
+        return applyFilters(result);
+    }, [devices, dbDevices, searchTerm, statusFilter, locationFilter]);
+
+    // Add data source toggle
+    const toggleDataSource = () => {
+        setDataSource(prev => prev === 'realtime' ? 'database' : 'realtime');
+    };
+
+    // Use the proper merged devices data for table display
+    const displayDevices = React.useMemo(() => {
+        // If we're viewing the database source, only show database devices
+        if (dataSource === 'database') {
+            return dbDevices;
+        }
+
+        // Otherwise show merged devices
+        return mergedDevices;
+    }, [mergedDevices, dbDevices, dataSource]);
+
+    // Helper function to safely format date for display
+    const formatDate = (dateString) => {
+        if (!dateString) return 'Belum pernah';
+
+        try {
+            const date = new Date(dateString);
+            // Check if date is valid
+            if (isNaN(date.getTime())) {
+                return 'Format tanggal tidak valid';
+            }
+            return date.toLocaleString('id-ID');
+        } catch (error) {
+            console.error('Date formatting error:', error, dateString);
+            return 'Error: Format tanggal tidak valid';
+        }
+    };
+
     return (
         <div className="bg-white rounded-xl shadow-md overflow-hidden mb-6">
             <div className="bg-gradient-to-r from-indigo-500 to-purple-600 p-4 mb-4">
@@ -159,12 +312,23 @@ const PerangkatSection = ({ devices, deviceStatus, isConnected, loading, error, 
                         Daftar Perangkat
                     </div>
                     <div className="flex items-center space-x-2">
+                        {/* Add data source toggle */}
+                        <div
+                            onClick={toggleDataSource}
+                            className={`text-sm bg-white/20 rounded-full px-3 py-1 flex items-center cursor-pointer hover:bg-white/30`}
+                        >
+                            <span className={`w-2 h-2 rounded-full mr-2 ${dataSource === 'realtime' ? 'bg-green-400 animate-pulse' : 'bg-blue-400'}`}></span>
+                            {dataSource === 'realtime' ? 'Real-time Data' : 'Database Data'}
+                        </div>
                         <div className={`text-sm bg-white/20 rounded-full px-3 py-1 flex items-center ${isConnected ? 'text-green-100' : 'text-red-100'}`}>
                             <span className={`w-2 h-2 rounded-full mr-2 ${isConnected ? 'bg-green-400 animate-pulse' : 'bg-red-400'}`}></span>
                             {isConnected ? 'Real-time Data' : 'Offline Mode'}
                         </div>
                         <button
-                            onClick={onRefresh}
+                            onClick={() => {
+                                onRefresh?.();
+                                fetchDatabaseDevices();
+                            }}
                             className="text-white p-2 rounded-full hover:bg-white/20 transition-all"
                             title="Refresh devices"
                         >
@@ -212,6 +376,25 @@ const PerangkatSection = ({ devices, deviceStatus, isConnected, loading, error, 
                     </div>
                 </div>
 
+                {/* Database specific error message */}
+                {dbError && (
+                    <div className="mb-4 bg-yellow-50 border border-yellow-200 rounded-md p-3">
+                        <div className="flex">
+                            <div className="flex-shrink-0">
+                                <svg className="h-5 w-5 text-yellow-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                                    <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                                </svg>
+                            </div>
+                            <div className="ml-3">
+                                <h3 className="text-sm font-medium text-yellow-800">Database Connection Warning</h3>
+                                <div className="mt-2 text-sm text-yellow-700">
+                                    <p>{dbError}</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
                 {/* Error message */}
                 {error && (
                     <div className="mb-4 bg-red-50 border border-red-200 rounded-md p-3">
@@ -248,7 +431,7 @@ const PerangkatSection = ({ devices, deviceStatus, isConnected, loading, error, 
                 )}
 
                 <div className="overflow-x-auto">
-                    {loading ? (
+                    {(loading || dbLoading) ? (
                         <div className="text-center py-8">
                             <svg className="animate-spin h-8 w-8 mx-auto text-indigo-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
@@ -257,94 +440,78 @@ const PerangkatSection = ({ devices, deviceStatus, isConnected, loading, error, 
                             <p className="mt-2 text-sm text-gray-500">Loading devices...</p>
                         </div>
                     ) : (
-                        filteredDevices.length > 0 ? (
+                        displayDevices.length > 0 ? (
                             <table className="w-full min-w-full table-auto">
                                 <thead className="bg-gray-50">
                                     <tr>
-                                        <th className="border-b border-gray-200 py-3 px-5 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ID Perangkat</th>
-                                        <th className="border-b border-gray-200 py-3 px-5 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Nama</th>
+                                        <th className="border-b border-gray-200 py-3 px-5 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ID</th>
+                                        <th className="border-b border-gray-200 py-3 px-5 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Nama Perangkat</th>
                                         <th className="border-b border-gray-200 py-3 px-5 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Lokasi</th>
                                         <th className="border-b border-gray-200 py-3 px-5 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-                                        <th className="border-b border-gray-200 py-3 px-5 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">PIR Sensor</th>
-                                        <th className="border-b border-gray-200 py-3 px-5 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Pump Status</th>
-                                        <th className="border-b border-gray-200 py-3 px-5 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Baterai</th>
-                                        <th className="border-b border-gray-200 py-3 px-5 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Last Seen</th>
-                                        <th className="border-b border-gray-200 py-3 px-5 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tindakan</th>
+                                        <th className="border-b border-gray-200 py-3 px-5 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Last Online</th>
+                                        <th className="border-b border-gray-200 py-3 px-5 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Created</th>
+                                        <th className="border-b border-gray-200 py-3 px-5 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Updated</th>
+                                        {/* Removed Actions column header */}
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-gray-200">
-                                    {filteredDevices.map((device, index) => {
-                                        const batteryLevel = getBatteryLevel(device);
-                                        let batteryColorClass = 'bg-green-500';
-                                        if (batteryLevel < 30) batteryColorClass = 'bg-red-500';
-                                        else if (batteryLevel < 70) batteryColorClass = 'bg-amber-500';
-
-                                        const deviceData = sensorData[device.device_id] || {};
+                                    {displayDevices.map((device, index) => {
                                         const isUpdating = updatingDevices.current.has(device.device_id);
-                                        const deviceConnected = device.status === 'online';
+                                        const fromDatabase = device.from_database === true;
+
+                                        // Handle device status logic based on data source
+                                        const deviceStatus = fromDatabase
+                                            ? device.device_status || 'nonaktif'
+                                            : device.status === 'online' ? 'aktif' : 'nonaktif';
+
+                                        const isActive = deviceStatus === 'aktif' || device.status === 'online';
 
                                         return (
-                                            <tr key={index} className={`${isUpdating ? 'bg-blue-50' : ''} hover:bg-gray-50 transition-colors`}>
-                                                <td className="py-3 px-5 border-b border-gray-200">
-                                                    <p className="text-xs font-semibold text-gray-600">{device.device_id}</p>
-                                                </td>
+                                            <tr key={index} className={`${isUpdating ? 'bg-blue-50' : ''} ${fromDatabase ? 'bg-gray-50' : ''} hover:bg-gray-50 transition-colors`}>
                                                 <td className="py-3 px-5 border-b border-gray-200">
                                                     <p className="text-xs font-semibold text-gray-600">
-                                                        {device.device_id.includes('ESP32') ? 'ESP32 Controller' : 'Sensor Node'}
+                                                        {device.db_id || device.device_id}
                                                     </p>
                                                 </td>
                                                 <td className="py-3 px-5 border-b border-gray-200">
-                                                    <p className="text-xs font-semibold text-gray-600">{device.location || 'Unknown'}</p>
+                                                    <div className="flex items-center">
+                                                        <p className="text-xs font-semibold text-gray-600">
+                                                            {device.device_name || device.device_id}
+                                                        </p>
+                                                        {fromDatabase && (
+                                                            <span className="ml-2 bg-blue-100 text-blue-800 text-xs px-1.5 py-0.5 rounded-full">DB</span>
+                                                        )}
+                                                    </div>
                                                 </td>
                                                 <td className="py-3 px-5 border-b border-gray-200">
-                                                    <div className={`flex items-center rounded-full py-1 px-3 text-center ${deviceConnected ? 'bg-green-100 text-green-800 border border-green-200' : 'bg-red-100 text-red-800 border border-red-200'}`}>
-                                                        <div className={`w-2 h-2 rounded-full mr-2 ${deviceConnected ? 'bg-green-500' : 'bg-red-500'} ${deviceConnected && dataUpdated ? 'animate-pulse' : ''}`}></div>
+                                                    <p className="text-xs font-semibold text-gray-600">
+                                                        {device.location || 'Default Location'}
+                                                    </p>
+                                                </td>
+                                                <td className="py-3 px-5 border-b border-gray-200">
+                                                    <div className={`flex items-center rounded-full py-1 px-3 text-center ${isActive ? 'bg-green-100 text-green-800 border border-green-200' : 'bg-red-100 text-red-800 border border-red-200'}`}>
+                                                        <div className={`w-2 h-2 rounded-full mr-2 ${isActive ? 'bg-green-500' : 'bg-red-500'}`}></div>
                                                         <p className="text-xs font-semibold">
-                                                            {deviceConnected ? 'Online' : 'Offline'}
+                                                            {isActive ? 'Aktif' : 'Nonaktif'}
                                                         </p>
                                                     </div>
                                                 </td>
                                                 <td className="py-3 px-5 border-b border-gray-200">
-                                                    {deviceConnected ? (
-                                                        <div className={`flex items-center rounded-full py-1 px-3 ${deviceData.pir_status ? 'bg-red-100 text-red-800 border border-red-300' : 'bg-gray-100 text-gray-600'}`}>
-                                                            <div className={`w-2 h-2 rounded-full mr-2 ${deviceData.pir_status ? 'bg-red-500 animate-pulse' : 'bg-gray-400'}`}></div>
-                                                            <span className="text-xs font-medium">{deviceData.pir_status ? 'DETECTED' : 'No Motion'}</span>
-                                                        </div>
-                                                    ) : (
-                                                        <span className="text-xs text-gray-400">Unavailable</span>
-                                                    )}
-                                                </td>
-                                                <td className="py-3 px-5 border-b border-gray-200">
-                                                    {deviceConnected ? (
-                                                        <div className={`flex items-center rounded-full py-1 px-3 ${deviceData.pump_status ? 'bg-blue-100 text-blue-800 border border-blue-300' : 'bg-gray-100 text-gray-600'}`}>
-                                                            <div className={`w-2 h-2 rounded-full mr-2 ${deviceData.pump_status ? 'bg-blue-500 animate-pulse' : 'bg-gray-400'}`}></div>
-                                                            <span className="text-xs font-medium">{deviceData.pump_status ? 'ON' : 'OFF'}</span>
-                                                        </div>
-                                                    ) : (
-                                                        <span className="text-xs text-gray-400">Unavailable</span>
-                                                    )}
-                                                </td>
-                                                <td className="py-3 px-5 border-b border-gray-200">
-                                                    <div className="flex items-center">
-                                                        <div className="h-1.5 w-16 bg-gray-200 rounded-full overflow-hidden">
-                                                            <div className={`h-full ${batteryColorClass} rounded-full`} style={{ width: `${batteryLevel}%` }}></div>
-                                                        </div>
-                                                        <span className="ml-2 text-xs font-medium text-gray-600">{batteryLevel}%</span>
-                                                    </div>
-                                                </td>
-                                                <td className="py-3 px-5 border-b border-gray-200">
                                                     <p className="text-xs text-gray-500">
-                                                        {device.last_seen ? new Date(device.last_seen).toLocaleString('id-ID') : 'Unknown'}
+                                                        {formatDate(device.last_online || device.last_seen)}
                                                     </p>
                                                 </td>
                                                 <td className="py-3 px-5 border-b border-gray-200">
-                                                    <button
-                                                        className={`px-3 py-1 text-xs rounded-full ${deviceConnected ? 'bg-blue-500 hover:bg-blue-600 text-white' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}
-                                                        disabled={!deviceConnected}
-                                                    >
-                                                        Kontrol
-                                                    </button>
+                                                    <p className="text-xs text-gray-500">
+                                                        {device.created_at || '-'}
+                                                    </p>
                                                 </td>
+                                                <td className="py-3 px-5 border-b border-gray-200">
+                                                    <p className="text-xs text-gray-500">
+                                                        {device.updated_at || '-'}
+                                                    </p>
+                                                </td>
+                                                {/* Removed Control button column */}
                                             </tr>
                                         );
                                     })}
@@ -359,15 +526,22 @@ const PerangkatSection = ({ devices, deviceStatus, isConnected, loading, error, 
                                 <p className="mt-1 text-sm text-gray-500">
                                     {searchTerm || statusFilter !== 'all' || locationFilter !== 'all'
                                         ? 'Try adjusting your search or filter criteria.'
-                                        : 'Connect ESP32 devices to see them here.'}
+                                        : 'Click "Tambah Perangkat" to add new devices or refresh the device list.'}
                                 </p>
+                                <button
+                                    onClick={fetchDatabaseDevices}
+                                    className="mt-4 px-4 py-2 bg-indigo-500 text-white rounded-md text-sm hover:bg-indigo-600 focus:outline-none transition-colors">
+                                    Refresh Device List
+                                </button>
                             </div>
                         )
                     )}
                 </div>
 
                 <div className="flex items-center justify-between mt-4">
-                    <button className="px-4 py-2 border border-indigo-500 text-sm font-medium rounded-md text-indigo-600 bg-white hover:bg-indigo-50 transition-all">
+                    <button
+                        onClick={() => fetchDatabaseDevices()}
+                        className="px-4 py-2 border border-indigo-500 text-sm font-medium rounded-md text-indigo-600 bg-white hover:bg-indigo-50 transition-all">
                         Tambah Perangkat
                     </button>
                     <div className="flex items-center gap-2">
@@ -386,5 +560,4 @@ const PerangkatSection = ({ devices, deviceStatus, isConnected, loading, error, 
         </div>
     );
 };
-
 export default PerangkatSection;

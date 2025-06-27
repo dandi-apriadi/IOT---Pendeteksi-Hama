@@ -35,13 +35,13 @@ const routes = [
   },
 
   // IoT Rice Pest Spraying Automation System Routes - Commented out temporarily
-  {
-    name: "Device Management",
-    layout: "/admin",
-    path: "devices",
-    icon: <MdDevicesOther className="h-6 w-6" />,
-    component: <DeviceManagement />,
-  },
+  // {
+  //   name: "Device Management",
+  //   layout: "/admin",
+  //   path: "devices",
+  //   icon: <MdDevicesOther className="h-6 w-6" />,
+  //   component: <DeviceManagement />,
+  // },
   {
     name: "Sensor Data",
     layout: "/admin",

@@ -1,12 +1,13 @@
 import express from 'express';
-import { Device, SprayingLog, Notification, Setting } from "../models/tableModel.js";
+import { Device, Notification } from "../models/tableModel.js";
 import Schedule from "../models/scheduleModel.js";
 import { Op } from "sequelize";
 
 const router = express.Router();
 
 /**
- * Routes for retrieving all model data from database
+ * Routes for retrieving model data from database
+ * CLEANED UP VERSION - Removed unused tables: spraying_logs, settings
  */
 
 // Get all devices
@@ -26,29 +27,6 @@ router.get('/api/devices', async (req, res) => {
         return res.status(500).json({
             status: 'error',
             message: 'Failed to retrieve devices',
-            error: error.message
-        });
-    }
-});
-
-// Get all spraying logs
-router.get('/api/spraying/logs', async (req, res) => {
-    try {
-        const logs = await SprayingLog.findAll({
-            order: [['start_time', 'DESC']],
-            include: [{ model: Device, attributes: ['device_name'] }]
-        });
-
-        return res.json({
-            status: 'success',
-            message: 'Spraying logs retrieved successfully',
-            data: logs
-        });
-    } catch (error) {
-        console.error('Error fetching spraying logs:', error);
-        return res.status(500).json({
-            status: 'error',
-            message: 'Failed to retrieve spraying logs',
             error: error.message
         });
     }
@@ -77,39 +55,17 @@ router.get('/api/notifications', async (req, res) => {
     }
 });
 
-// Get all settings
-router.get('/api/settings', async (req, res) => {
-    try {
-        const settings = await Setting.findAll({
-            order: [['setting_id', 'ASC']]
-        });
-
-        return res.json({
-            status: 'success',
-            message: 'Settings retrieved successfully',
-            data: settings
-        });
-    } catch (error) {
-        console.error('Error fetching settings:', error);
-        return res.status(500).json({
-            status: 'error',
-            message: 'Failed to retrieve settings',
-            error: error.message
-        });
-    }
-});
-
 // Get all schedules
-router.get('/api/all/schedules', async (req, res) => {
+router.get('/api/schedules', async (req, res) => {
     try {
         const schedules = await Schedule.findAll({
-            order: [['created_at', 'DESC']],
-            include: [{ model: Device, attributes: ['device_name', 'location'] }]
+            order: [['schedule_id', 'ASC']],
+            include: [{ model: Device, attributes: ['device_name'] }]
         });
 
         return res.json({
             status: 'success',
-            message: 'All schedules retrieved successfully',
+            message: 'Schedules retrieved successfully',
             data: schedules
         });
     } catch (error) {

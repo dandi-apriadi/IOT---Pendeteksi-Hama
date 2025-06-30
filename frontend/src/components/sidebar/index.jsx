@@ -6,17 +6,28 @@ import routes from "routes.js";
 
 const Sidebar = ({ open, onClose }) => {
   return (
-    <div
-      className={`
-        sm:none duration-175 linear fixed
-        min-h-full w-72 flex flex-col
-        bg-white dark:!bg-navy-800
-        shadow-2xl shadow-white/5
-        transition-all dark:text-white
-        md:!z-50 lg:!z-50 xl:!z-0
-        ${open ? "translate-x-0" : "-translate-x-96"}
-      `}
-    >
+    <>
+      {/* Backdrop Overlay for Mobile */}
+      {open && (
+        <div
+          className="fixed inset-0 bg-black/50 z-[9998] xl:hidden"
+          onClick={onClose}
+          aria-label="Close Sidebar Overlay"
+        />
+      )}
+
+      {/* Sidebar */}
+      <div
+        className={`
+          sm:none duration-175 linear fixed
+          min-h-full w-72 flex flex-col
+          bg-white dark:!bg-navy-800
+          shadow-2xl shadow-white/5
+          transition-all dark:text-white
+          z-[9999] md:z-50 lg:z-50 xl:z-0
+          ${open ? "translate-x-0" : "-translate-x-96"}
+        `}
+      >
       {/* Close Button */}
       <button
         className="absolute top-4 right-4 cursor-pointer xl:hidden"
@@ -44,6 +55,7 @@ const Sidebar = ({ open, onClose }) => {
       </nav>
 
     </div>
+    </>
   );
 };
 

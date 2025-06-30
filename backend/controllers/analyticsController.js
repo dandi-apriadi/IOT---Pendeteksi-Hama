@@ -3,7 +3,7 @@ import moment from 'moment';
 import Sensor from "../models/sensorModel.js";
 import { Device } from "../models/tableModel.js";
 import EnergyTrend from "../models/energyTrendModel.js";
-import Alarm from "../models/alarmModel.js";
+// import Alarm from "../models/alarmModel.js"; // Removed - alarm feature disabled
 
 const { Op } = Sequelize;
 
@@ -188,63 +188,15 @@ export const getPumpUsageStats = async (req, res) => {
 };
 
 /**
- * Get alarm history
+ * Get alarm history - DISABLED
+ * Alarm functionality has been removed from the system
  */
 export const getAlarmHistory = async (req, res) => {
-    try {
-        const page = parseInt(req.query.page) || 0;
-        const limit = parseInt(req.query.limit) || 10;
-        const offset = page * limit;
-        const deviceId = req.query.device_id;
-        const severity = req.query.severity;
-        const status = req.query.status;
-        const startDate = req.query.start_date ? new Date(req.query.start_date) : null;
-        const endDate = req.query.end_date ? new Date(req.query.end_date) : null;
-
-        // Build where clause
-        const whereClause = {};
-        if (deviceId) whereClause.device_id = deviceId;
-        if (severity) whereClause.severity = severity;
-        if (status) whereClause.status = status;
-
-        if (startDate && endDate) {
-            whereClause.timestamp = { [Op.between]: [startDate, endDate] };
-        } else if (startDate) {
-            whereClause.timestamp = { [Op.gte]: startDate };
-        } else if (endDate) {
-            whereClause.timestamp = { [Op.lte]: endDate };
-        }
-
-        // Get alarm history with pagination
-        const { count, rows: alarms } = await Alarm.findAndCountAll({
-            where: whereClause,
-            include: [
-                {
-                    model: Device,
-                    attributes: ['device_name', 'location']
-                }
-            ],
-            order: [['timestamp', 'DESC']],
-            offset,
-            limit
-        });
-
-        return res.json({
-            status: 'success',
-            message: 'Alarm history retrieved',
-            data: alarms,
-            count,
-            totalPages: Math.ceil(count / limit),
-            currentPage: page
-        });
-    } catch (error) {
-        console.error('Error getting alarm history:', error);
-        return res.status(500).json({
-            status: 'error',
-            message: 'Failed to retrieve alarm history',
-            error: error.message
-        });
-    }
+    return res.status(410).json({
+        status: 'error',
+        message: 'Alarm functionality has been removed from the system',
+        error: 'This endpoint is no longer available'
+    });
 };
 
 /**

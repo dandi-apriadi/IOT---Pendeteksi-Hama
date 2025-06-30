@@ -2,7 +2,7 @@ import db from '../config/Database.js';
 import { Device } from '../models/tableModel.js';
 import Sensor from '../models/sensorModel.js';
 import EnergyTrend from '../models/energyTrendModel.js';
-import Alarm from '../models/alarmModel.js';
+// import Alarm from '../models/alarmModel.js'; // Removed - alarm feature disabled
 
 /**
  * Setup the database with all required tables
@@ -46,12 +46,15 @@ const setupDatabase = async () => {
             console.error('Error syncing EnergyTrend table:', err.message);
         }
 
+        // Alarm table sync removed - alarm feature disabled
+        /* 
         try {
             await Alarm.sync({ alter: true });
             console.log('Alarm table synced');
         } catch (err) {
             console.error('Error syncing Alarm table:', err.message);
         }
+        */
 
         // Enable foreign key checks after setup
         await db.query('SET FOREIGN_KEY_CHECKS = 1');
@@ -84,11 +87,14 @@ const setupDatabase = async () => {
                 ON sensors (pump_status)
             `);
 
+            // Alarm index removed - alarm feature disabled
+            /*
             // For aggregation queries
             await db.query(`
                 CREATE INDEX IF NOT EXISTS idx_alarms_device_time 
                 ON alarms (device_id, timestamp)
             `);
+            */
         } catch (indexError) {
             console.warn('Error creating custom indexes:', indexError.message);
             console.warn('Some queries may be slower without these indexes');

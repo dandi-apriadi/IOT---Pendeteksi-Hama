@@ -3,7 +3,7 @@ import moment from 'moment';
 import Sensor from "../models/sensorModel.js";
 import { Device } from "../models/tableModel.js";
 import EnergyTrend from "../models/energyTrendModel.js";
-import { checkSensorAlarms } from "./alarmController.js";
+// import { checkSensorAlarms } from "./alarmController.js"; // Removed - alarm feature disabled
 import { processESP32Data, getDeviceDatabaseId, validateSensorValues } from "../util/dataProcessor.js";
 import Notification from '../models/notificationModel.js';
 
@@ -402,19 +402,8 @@ export const recordSensorData = async (req, res) => {
                 cleanupExpiredCache();
             }
 
-            // Check for alarm conditions asynchronously (don't wait for completion)
-            checkSensorAlarms({
-                device_id: deviceRecord.device_id,
-                voltage: processedData.voltage,
-                current: processedData.current,
-                power: processedData.power,
-                energy: processedData.energy,
-                pir_status: processedData.pir_status,
-                pump_status: processedData.pump_status,
-                auto_mode: processedData.auto_mode
-            }).catch(err => {
-                // Silent error handling for alarms
-            });
+            // Alarm checking feature has been disabled
+            // checkSensorAlarms() calls removed as alarm system is no longer used
 
             return res.status(201).json({
                 status: 'success',

@@ -62,48 +62,7 @@ const Device = db.define('devices', {
     indexes: []
 });
 
-// Spraying Logs Model - Reduce indexes
-const SprayingLog = db.define('spraying_logs', {
-    log_id: {
-        type: DataTypes.INTEGER,
-        primaryKey: true,
-        autoIncrement: true,
-        allowNull: false
-    },
-    device_id: {
-        type: DataTypes.INTEGER,
-        allowNull: false,
-        references: {
-            model: Device,
-            key: 'device_id'
-        }
-    },
-    spraying_mode: {
-        type: DataTypes.ENUM('otomatis', 'manual'),
-        allowNull: false
-    },
-    start_time: {
-        type: DataTypes.DATE,
-        allowNull: false
-    },
-    end_time: {
-        type: DataTypes.DATE,
-        allowNull: true
-    },
-    pesticide_used: {
-        type: DataTypes.FLOAT,
-        allowNull: true
-    },
-    status: {
-        type: DataTypes.ENUM('berhasil', 'gagal'),
-        allowNull: false,
-        defaultValue: 'berhasil'
-    }
-}, {
-    freezeTableName: true,
-    timestamps: false,
-    indexes: [] // Remove unnecessary indexes
-});
+// SprayingLog model removed - no longer used in active controllers
 
 // Notifications Model - Reduce indexes
 const Notification = db.define('notifications', {
@@ -145,48 +104,14 @@ const Notification = db.define('notifications', {
     indexes: [] // Remove unnecessary indexes
 });
 
-// Settings Model
-const Setting = db.define('settings', {
-    setting_id: {
-        type: DataTypes.INTEGER,
-        primaryKey: true,
-        autoIncrement: true,
-        allowNull: false
-    },
-    parameter: {
-        type: DataTypes.STRING(50),
-        allowNull: false
-    },
-    value: {
-        type: DataTypes.STRING(50),
-        allowNull: false
-    },
-    description: {
-        type: DataTypes.TEXT,
-        allowNull: true
-    },
-    updated_at: {
-        type: DataTypes.DATE,
-        defaultValue: DataTypes.NOW,
-        get() {
-            return moment(this.getDataValue('updated_at')).format('D MMMM, YYYY, h:mm A');
-        }
-    }
-}, {
-    freezeTableName: true,
-    timestamps: true,
-    createdAt: false,
-    updatedAt: 'updated_at',
-    indexes: []
-});
+// Settings model removed - replaced with configuration management
 
 // Define relationships
-Device.hasMany(SprayingLog, { foreignKey: 'device_id' });
+// SprayingLog relationships removed - model no longer used
 Device.hasMany(Notification, { foreignKey: 'device_id' });
 
 // Relationships with Sensor are defined in sensorModel.js
-SprayingLog.belongsTo(Device, { foreignKey: 'device_id' });
 Notification.belongsTo(Device, { foreignKey: 'device_id' });
 
-// Export all models
-export { Device, SprayingLog, Notification, Setting };
+// Export models - removed SprayingLog and Setting as they are no longer used
+export { Device, Notification };

@@ -22,7 +22,6 @@ import modelDataRoutes from './routes/modelDataRoutes.js';
 import dashboardRoutes from './routes/administrator/dashboardRoutes.js';
 import profileRoutes from './routes/administrator/profileRoutes.js';
 import userManagementRoutes from './routes/administrator/userManagementRoutes.js';
-import alarmRoutes from './routes/alarm.js';
 import analyticsRoutes from './routes/analytics.js';
 import scheduleRoutes from './routes/scheduleRoutes.js';
 import notificationRoutes from './routes/notificationRoutes.js';
@@ -286,7 +285,7 @@ app.use('/api/data', modelDataRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/profile', profileRoutes);
 app.use('/api/users', userManagementRoutes);
-app.use('/api/alarms', alarmRoutes);
+// app.use('/api/alarms', alarmRoutes); // Removed - alarm feature no longer used
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/schedules', scheduleRoutes);
 app.use('/api/notifications', notificationRoutes);
@@ -1140,7 +1139,7 @@ const initializeDatabase = async () => {
         await import('./models/sensorModel.js');
         await import('./models/tableModel.js');
         await import('./models/userModel.js');
-        await import('./models/alarmModel.js');
+        // await import('./models/alarmModel.js'); // Removed - alarm feature disabled
 
         console.log('Models imported successfully.');
 

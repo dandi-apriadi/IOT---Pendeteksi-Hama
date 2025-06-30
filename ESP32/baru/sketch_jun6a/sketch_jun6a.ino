@@ -120,6 +120,11 @@ char nextPumpTimeStr[25] = "";
 unsigned long logSequence = 1;
 char logTimeBuffer[25];
 
+// Countdown variables for 30-minute schedule display
+bool scheduleCountdownActive = false;
+unsigned long scheduleCountdownStartTime = 0;
+const unsigned long scheduleCountdownDuration = 30UL * 60UL * 1000UL; // 30 minutes in milliseconds
+
 // PIR sensor optimized variables
 volatile bool pirState = false;
 volatile bool pirStateChanged = false;
@@ -188,6 +193,9 @@ void checkConnections();
 void updateNextPumpTime();
 void updateDisplays();
 void updateScheduleDisplay();  // Add prototype for updateScheduleDisplay
+void updateCountdownDisplay(); // Add prototype for countdown display
+void forceLCD2Refresh(); // Add prototype for LCD2 refresh
+void debugLCD2Status(); // Add prototype for LCD2 debug
 
 // Command handler prototypes
 void handleTogglePump(String commandId);
@@ -452,7 +460,10 @@ void checkPirSensor() {
   pirStateChanged = false;
   
   // Always keep electrical monitoring visible on LCD2, even without motion changes
-  updateElectricalMonitoringDisplay();
+  // Only call this if no countdown is active and no motion is currently detected
+  if (!scheduleCountdownActive && !sensorData.pirStatus) {
+    updateElectricalMonitoringDisplay();
+  }
 }
 
 // Split into two specialized functions for motion start/stop
@@ -466,9 +477,14 @@ void updatePirDisplayMotionStart() {
   delayMicroseconds(10000); // 10ms flash
   lcd1.backlight();
   
-  // Show motion alert on LCD2 line 0 while keeping electrical data on line 1
+  // Show motion alert on LCD2 line 0, but keep countdown if active
   lcd2.setCursor(0, 0);
   lcd2.print("!MOTION DETECTED!");
+  
+  // Keep countdown on line 1 if active, otherwise show electrical data
+  if (!scheduleCountdownActive) {
+    updateElectricalMonitoringDisplay();
+  }
   
   // Log the event
   Serial.println("*** MOTION STARTED - DISPLAY UPDATED ***");
@@ -479,16 +495,25 @@ void updatePirDisplayMotionStop() {
   lcd1.setCursor(0, 2);
   lcd1.print("PIR: TIDAK DETEKSI");
   
-  // Update LCD2 top line to show monitoring mode
+  // Update LCD2 top line based on countdown status
   lcd2.setCursor(0, 0);
-  lcd2.print("ELECTRICAL MONITOR");
+  if (scheduleCountdownActive) {
+    lcd2.print("SCHEDULE TIMER  ");
+  } else {
+    lcd2.print("ELECTRICAL MONITOR");
+  }
   
   // Log the event
   Serial.println("*** MOTION STOPPED - DISPLAY UPDATED ***");
 }
 
-// Keep electrical data always visible on LCD2 line 1
+// Keep electrical data always visible on LCD2 line 1, unless countdown is active
 void updateElectricalMonitoringDisplay() {
+  // If countdown is active, don't override the countdown display
+  if (scheduleCountdownActive) {
+    return;
+  }
+  
   // Always update electrical monitoring on second line of LCD2
   lcd2.setCursor(0, 1);
   
@@ -841,6 +866,12 @@ void deactivatePump(const char* deactivationType) {
   digitalWrite(pumpPin, LOW);
   pumpActive = false;
   
+  // Stop countdown if it was an AUTO deactivation after schedule completion
+  if (scheduleCountdownActive && strcmp(deactivationType, "AUTO") == 0) {
+    scheduleCountdownActive = false;
+    logMessage("COUNTDOWN", "Schedule countdown stopped - auto pump cycle completed");
+  }
+  
   // Update sensor data immediately for real-time status
   if (xSemaphoreTake(sensorDataMutex, 10 / portTICK_PERIOD_MS)) {
     sensorData.pumpStatus = false;
@@ -868,6 +899,11 @@ void handlePumpAutomation() {
     if (nowMillis - lastScheduledPumpTime >= scheduleInterval) {
       activatePump("AUTO");
       lastScheduledPumpTime = nowMillis;
+      
+      // Start 30-minute countdown display when schedule is activated
+      scheduleCountdownActive = true;
+      scheduleCountdownStartTime = nowMillis;
+      logMessage("COUNTDOWN", "30-minute schedule countdown started");
     }
   }
 
@@ -1109,16 +1145,30 @@ void updateDisplays() {
     lcd1.print(newLine);
     strcpy(prevDisplay[3], newLine);
     
-    // Update second LCD with electrical data
+    // Update second LCD with electrical data or countdown
     if (displayUpdateCounter % 4 == 0) {
-      // Update LCD2 header if no motion is active
-      if (!sensorData.pirStatus) {
+      // Check if countdown is active
+      if (scheduleCountdownActive) {
+        updateCountdownDisplay();
+      } else {
+        // Update LCD2 header if no motion is active
+        if (!sensorData.pirStatus) {
+          lcd2.setCursor(0, 0);
+          lcd2.print("ELECTRICAL MONITOR");
+        }
+        
+        // Always update electrical values when countdown is not active
+        updateElectricalMonitoringDisplay();
+      }
+    }
+    
+    // Force LCD2 update if it appears to be blank (safety check)
+    if (displayUpdateCounter % 20 == 0) {  // Every 10 seconds
+      if (!scheduleCountdownActive) {
         lcd2.setCursor(0, 0);
         lcd2.print("ELECTRICAL MONITOR");
+        updateElectricalMonitoringDisplay();
       }
-      
-      // Always update electrical values
-      updateElectricalMonitoringDisplay();
     }
     
     // Connection status indicator
@@ -1127,6 +1177,49 @@ void updateDisplays() {
     
     xSemaphoreGive(sensorDataMutex);
   }
+}
+
+// Countdown Display Function
+void updateCountdownDisplay() {
+  if (!scheduleCountdownActive) {
+    return;
+  }
+  
+  unsigned long currentTime = millis();
+  unsigned long elapsedTime = currentTime - scheduleCountdownStartTime;
+  
+  // Check if countdown has finished
+  if (elapsedTime >= scheduleCountdownDuration) {
+    scheduleCountdownActive = false;
+    logMessage("COUNTDOWN", "30-minute schedule countdown finished");
+    
+    // Return LCD2 to normal electrical monitoring display
+    lcd2.setCursor(0, 0);
+    lcd2.print("ELECTRICAL MONITOR");
+    updateElectricalMonitoringDisplay();
+    return;
+  }
+  
+  // Calculate remaining time
+  unsigned long remainingTime = scheduleCountdownDuration - elapsedTime;
+  unsigned long remainingMinutes = remainingTime / (60UL * 1000UL);
+  unsigned long remainingSeconds = (remainingTime % (60UL * 1000UL)) / 1000UL;
+  
+  // Display countdown on LCD2
+  lcd2.setCursor(0, 0);
+  lcd2.print("SCHEDULE TIMER  ");
+  
+  lcd2.setCursor(0, 1);
+  char countdownStr[17];
+  
+  // Show format MM:SS for better readability
+  if (remainingMinutes > 0) {
+    snprintf(countdownStr, sizeof(countdownStr), "%02lu:%02lu remaining", remainingMinutes, remainingSeconds);
+  } else {
+    snprintf(countdownStr, sizeof(countdownStr), "00:%02lu finishing", remainingSeconds);
+  }
+  
+  lcd2.print(countdownStr);
 }
 
 // Add these command debounce and memory management variables
@@ -1365,6 +1458,12 @@ void handleTogglePump(String commandId) {
 
 void handlePumpOn(String commandId) {
   if (!pumpActive) {
+    // Stop countdown when manual pump control is used
+    if (scheduleCountdownActive) {
+      scheduleCountdownActive = false;
+      logMessage("COUNTDOWN", "Schedule countdown stopped - manual pump activation");
+    }
+    
     activatePump("MANUAL");
     logMessage("PUMP", "Pump turned ON via command (MANUAL)");
     sendCommandResponse("pump_on", true, commandId, "Pump turned on successfully");
@@ -1376,6 +1475,12 @@ void handlePumpOn(String commandId) {
 
 void handlePumpOff(String commandId) {
   if (pumpActive) {
+    // Stop countdown when manual pump control is used
+    if (scheduleCountdownActive) {
+      scheduleCountdownActive = false;
+      logMessage("COUNTDOWN", "Schedule countdown stopped - manual pump deactivation");
+    }
+    
     deactivatePump("MANUAL");
     logMessage("PUMP", "Pump turned OFF via command (MANUAL)");
     sendCommandResponse("pump_off", true, commandId, "Pump turned off successfully");
@@ -1396,6 +1501,13 @@ void handleSetMode(String mode, String commandId) {
     updateDisplays();
   } else if (mode == "manual") {
     isAutoMode = false;
+    
+    // Stop countdown when switching to manual mode
+    if (scheduleCountdownActive) {
+      scheduleCountdownActive = false;
+      logMessage("COUNTDOWN", "Schedule countdown stopped - switched to manual mode");
+    }
+    
     logMessage("MODE", "Set to MANUAL mode");
     sendCommandResponse("set_mode", true, commandId, "Mode set to MANUAL");
     
@@ -1754,9 +1866,16 @@ void setup() {
   sensorData.pumpStatus = false;
   sensorData.timestamp = "Unknown";
   
+  // Read initial sensor data to populate the structure
+  readSensorData();
+  
   // Initialize schedules
   scheduleCount = 0;
   lastExecutedDay = -1;
+  
+  // Initialize countdown variables
+  scheduleCountdownActive = false;
+  scheduleCountdownStartTime = 0;
   
   // Track free heap
   freeHeapAtBoot = ESP.getFreeHeap();
@@ -1764,6 +1883,7 @@ void setup() {
   
   logMessage("SYSTEM", "ESP32 initialization complete");
   logMessage("TIMEZONE", "Configured for WITA (UTC+8) timezone");
+  logMessage("COUNTDOWN", "30-minute schedule countdown feature ready");
   
   if (ntpSynced) {
     String currentTime = getWITATimeString();
@@ -1776,7 +1896,21 @@ void setup() {
   
   lcd2.clear();
   lcd2.setCursor(0, 0);
-  lcd2.print("IoT Monitor");
+  lcd2.print("ELECTRICAL MONITOR");
+  lcd2.setCursor(0, 1);
+  lcd2.print("Initializing...");
+  
+  // Test LCD2 by showing voltage and current (simulated if needed)
+  delay(1000);
+  float testVoltage = simulatePZEM ? 220.0 : (isnan(sensorData.voltage) ? 0.0 : sensorData.voltage);
+  float testCurrent = simulatePZEM ? 2.0 : (isnan(sensorData.current) ? 0.0 : sensorData.current);
+  
+  lcd2.setCursor(0, 1);
+  char testLine[17];
+  snprintf(testLine, sizeof(testLine), "V:%.1fV I:%.2fA", testVoltage, testCurrent);
+  lcd2.print(testLine);
+  
+  logMessage("LCD", "LCD2 display test completed");
 }
 
 // Function to immediately update schedule display on LCD
@@ -1822,8 +1956,8 @@ void updateScheduleDisplay() {
               schedules[i].hour < schedules[nextScheduleIndex].hour ||
               (schedules[i].hour == schedules[nextScheduleIndex].hour && 
                schedules[i].minute < schedules[nextScheduleIndex].minute)) {
-            nextScheduleIndex = i;
-          }
+                nextScheduleIndex = i;
+              }
         }
       }
     }
@@ -1851,10 +1985,6 @@ void updateScheduleDisplay() {
                  schedules[nextScheduleIndex].hour, 
                  schedules[nextScheduleIndex].minute);
       }
-      
-      logMessage("DISPLAY", ("Found next schedule: " + String(schedules[nextScheduleIndex].hour) + 
-                            ":" + String(schedules[nextScheduleIndex].minute) + 
-                            ", Minutes remaining: " + String(minutesRemaining)).c_str());
     } else {
       // All schedules for today are done, show first schedule for tomorrow
       int earliestIndex = -1;
@@ -1887,6 +2017,38 @@ void updateScheduleDisplay() {
   logMessage("DISPLAY", ("Schedule updated: " + String(newLine)).c_str());
   
   xSemaphoreGive(sensorDataMutex);
+}
+
+
+// LCD2 Debug and Refresh Functions
+void forceLCD2Refresh() {
+  if (scheduleCountdownActive) {
+    // If countdown is active, update countdown
+    updateCountdownDisplay();
+  } else {
+    // Otherwise show electrical monitoring
+    lcd2.setCursor(0, 0);
+    lcd2.print("ELECTRICAL MONITOR");
+    
+    lcd2.setCursor(0, 1);
+    float displayVoltage = isnan(sensorData.voltage) ? 0.0 : sensorData.voltage;
+    float displayCurrent = isnan(sensorData.current) ? 0.0 : sensorData.current;
+    
+    char electricLine[17];
+    snprintf(electricLine, sizeof(electricLine), "V:%.1fV I:%.2fA", 
+             displayVoltage, displayCurrent);
+    lcd2.print(electricLine);
+  }
+  
+  logMessage("LCD2", "Forced refresh completed");
+}
+
+void debugLCD2Status() {
+  logMessage("LCD2_DEBUG", ("Countdown active: " + String(scheduleCountdownActive ? "YES" : "NO")).c_str());
+  logMessage("LCD2_DEBUG", ("PIR status: " + String(sensorData.pirStatus ? "DETECTED" : "NOT_DETECTED")).c_str());
+  logMessage("LCD2_DEBUG", ("Motion detected flag: " + String(motionDetected ? "YES" : "NO")).c_str());
+  logMessage("LCD2_DEBUG", ("Voltage: " + String(sensorData.voltage)).c_str());
+  logMessage("LCD2_DEBUG", ("Current: " + String(sensorData.current)).c_str());
 }
 
 void loop() {
@@ -1922,6 +2084,13 @@ void loop() {
     lastDisplayTime = currentTime;
   }
   
+  // Update countdown display every 1 second for smooth countdown
+  static unsigned long lastCountdownUpdate = 0;
+  if (scheduleCountdownActive && currentTime - lastCountdownUpdate > 1000) {
+    updateCountdownDisplay();
+    lastCountdownUpdate = currentTime;
+  }
+  
   // Check connections every 10 seconds
   if (currentTime - lastConnectionCheckTime > 10000) {
     checkConnections();
@@ -1955,6 +2124,20 @@ void loop() {
     }
     
     lastMemoryCheck = currentTime;
+  }
+  
+  // Force LCD2 refresh every 15 seconds as a safety measure
+  static unsigned long lastLCD2Refresh = 0;
+  if (currentTime - lastLCD2Refresh > 15000) {
+    forceLCD2Refresh();
+    lastLCD2Refresh = currentTime;
+  }
+  
+  // Debug LCD2 status every 60 seconds
+  static unsigned long lastLCD2Debug = 0;
+  if (currentTime - lastLCD2Debug > 60000) {
+    debugLCD2Status();
+    lastLCD2Debug = currentTime;
   }
   
   // Prevent watchdog reset

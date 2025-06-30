@@ -26,12 +26,6 @@ const Dashboard = () => {
   const [activeTab, setActiveTab] = useState("esp32");
 
   // General state
-  const [cacheStatus, setCacheStatus] = useState({
-    totalRequests: 0,
-    cachedRequests: 0,
-    rateLimitedRequests: 0,
-    lastCacheCleared: null
-  });
   const [loadingState, setLoading] = useState(false);
   const [localSensorData, setLocalSensorData] = useState(null);
   const [localLastUpdate, setLocalLastUpdate] = useState(null);
@@ -461,39 +455,7 @@ const Dashboard = () => {
     }
   }, [verifyDeviceData, safeFetchLatestSensorData]);
 
-  // Force refresh functionality
-  const forceRefresh = () => {
-    setLoading(true);
-    setConnectionAttempts(prev => prev + 1);
 
-    safeCheckConnection()
-      .then(() => {
-        Promise.all([
-          safeFetchLatestSensorData().catch(err => errorOnce('FETCH_SENSOR_ERROR', 'Fetch latest data error:', err.message)),
-          safeFetchDeviceStatus().catch(err => errorOnce('FETCH_DEVICE_ERROR', 'Fetch device status error:', err.message))
-        ]).then(() => {
-          deviceDataRef.current.consecutiveFailures = 0;
-          setDeviceConnectionInfo(prev => ({
-            ...prev,
-            pingAttempts: 0,
-            lastRefresh: new Date()
-          }));
-        }).finally(() => {
-          setLoading(false);
-        });
-      })
-      .catch(() => setLoading(false));
-  };
-
-  // Clear cache function
-  const clearCache = () => {
-    REQUEST_CACHE.clear();
-    setCacheStatus(prev => ({
-      ...prev,
-      lastCacheCleared: new Date().toISOString(),
-      cachedRequests: 0
-    }));
-  };
 
   // Add a data monitoring function for consistent event logging
   const monitorDataUpdates = (data, source) => {
@@ -625,16 +587,6 @@ const Dashboard = () => {
     };
   }, [isOffline]); // Only re-run if offline status changes
 
-  // Add data refresh debouncing - once per 10 seconds at most
-  const debouncedRefresh = useCallback(() => {
-    if (!debouncedRefresh.lastCall || (Date.now() - debouncedRefresh.lastCall > 10000)) {
-      debouncedRefresh.lastCall = Date.now();
-      forceRefresh();
-    } else {
-      warnOnce('REFRESH_DEBOUNCED', 'Refresh request ignored - too soon after previous refresh');
-    }
-  }, [forceRefresh]);
-
   // Define connectionQuality based on connectionStatus
   const connectionQuality = {
     qualityLevel: connectionStatus.qualityLevel || 'unknown'
@@ -668,24 +620,6 @@ const Dashboard = () => {
             </div>
 
             <div className="flex items-center space-x-2 mt-4 lg:mt-0">
-              <button
-                onClick={forceRefresh}
-                className="px-3 py-1.5 bg-blue-500 bg-opacity-30 text-white text-sm font-medium rounded-md hover:bg-opacity-40 transition-colors flex items-center"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                </svg>
-                Refresh Data {loadingState && <span className="ml-1 animate-pulse">...</span>}
-              </button>
-              <button
-                onClick={clearCache}
-                className="px-3 py-1.5 bg-blue-500 bg-opacity-30 text-white text-sm font-medium rounded-md hover:bg-opacity-40 transition-colors flex items-center"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                </svg>
-                Clear Cache
-              </button>
               {activeTab === "jadwal" && (
                 <button
                   onClick={() => setShowAddScheduleModal(true)}

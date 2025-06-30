@@ -3,12 +3,9 @@ import SignIn from "views/auth/SignIn";
 import MainDashboard from "views/admin/default";
 import ChangePassword from "views/admin/changepassword";
 import Logout from "views/auth/Logout";
-import DeviceManagement from "views/admin/devices";
 import SensorData from "views/admin/sensors";
 import SprayingControl from "views/admin/spraying";
 import Notifications from "views/admin/notifications/index.jsx";
-import Analytics from "views/admin/analytics";
-import Settings from "views/admin/settings";
 
 // Import the icon you prefer
 import {

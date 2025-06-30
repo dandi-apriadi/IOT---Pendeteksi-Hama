@@ -111,6 +111,37 @@ const SprayingControl = () => {
         }
     }, []); // ✅ EMPTY dependency array
 
+    // Force refresh schedules - dapat dipanggil kapan saja
+    const refreshSchedules = useCallback(async () => {
+        if (!isMountedRef.current) return;
+        
+        // Allow refresh even if already loaded
+        scheduleLoadingRef.current = true;
+        setScheduleLoading(true);
+        setScheduleError(null);
+        
+        try {
+            console.log("🔄 Force refreshing schedules...");
+            const res = await axios.get(`${API_BASE}/api/schedules`);
+            
+            if (isMountedRef.current) {
+                const scheduleData = Array.isArray(res.data?.data) ? res.data.data : [];
+                console.log(`✅ Refreshed ${scheduleData.length} schedules`);
+                setSchedules(scheduleData);
+            }
+        } catch (err) {
+            if (isMountedRef.current) {
+                console.error("Error refreshing schedules:", err);
+                setScheduleError("Gagal memuat jadwal");
+            }
+        } finally {
+            scheduleLoadingRef.current = false;
+            if (isMountedRef.current) {
+                setScheduleLoading(false);
+            }
+        }
+    }, []); // ✅ EMPTY dependency array
+
     const fetchDevices = useCallback(async (force = false) => {
         if (!isMountedRef.current) return;
 
@@ -203,22 +234,82 @@ const SprayingControl = () => {
 
     const handleUpdateSchedule = async (scheduleId, updateData) => {
         try {
+            console.log("🔧 handleUpdateSchedule called with:", {
+                scheduleId,
+                scheduleIdType: typeof scheduleId,
+                updateData,
+                currentSchedulesCount: schedules.length
+            });
+
             const response = await axios.put(`${API_BASE}/api/schedules/${scheduleId}`, updateData);
+            
+            console.log("📡 API Response:", response.data);
             
             // ✅ HANYA optimistic update - TIDAK ADA refetch
             if (response.data?.data) {
-                setSchedules(prev => prev.map(schedule => 
-                    schedule.schedule_id === scheduleId ? response.data.data : schedule
-                ));
+                const updatedSchedule = response.data.data;
+                setSchedules(prev => {
+                    console.log("🔍 Looking for schedule with ID:", scheduleId, "Type:", typeof scheduleId);
+                    console.log("📋 Current schedules:", prev.map(s => ({ id: s.schedule_id, idType: typeof s.schedule_id, title: s.title })));
+                    
+                    const newSchedules = prev.map(schedule => {
+                        // Handle both string and number comparison
+                        const isMatch = schedule.schedule_id == scheduleId || 
+                                       schedule.schedule_id === parseInt(scheduleId) || 
+                                       schedule.schedule_id === scheduleId.toString();
+                        
+                        if (isMatch) {
+                            console.log("✅ Found matching schedule to update:", {
+                                oldSchedule: { id: schedule.schedule_id, title: schedule.title, active: schedule.is_active },
+                                newSchedule: { id: updatedSchedule.schedule_id, title: updatedSchedule.title, active: updatedSchedule.is_active }
+                            });
+                            return updatedSchedule;
+                        }
+                        return schedule;
+                    });
+                    
+                    console.log("📊 Schedule updated optimistically:", {
+                        scheduleId,
+                        oldCount: prev.length,
+                        newCount: newSchedules.length,
+                        updatedSchedule: {
+                            id: updatedSchedule.schedule_id,
+                            title: updatedSchedule.title,
+                            is_active: updatedSchedule.is_active,
+                            start_time: updatedSchedule.start_time
+                        }
+                    });
+                    console.log("🔄 Before update - schedules:", prev.map(s => ({ id: s.schedule_id, title: s.title, active: s.is_active })));
+                    console.log("🔄 After update - schedules:", newSchedules.map(s => ({ id: s.schedule_id, title: s.title, active: s.is_active })));
+                    return newSchedules;
+                });
                 console.log("✅ Schedule updated successfully with optimistic update");
             } else {
                 // ❌ HAPUS fallback refetch yang menyebabkan request berlebihan
                 console.warn("⚠️ No data returned from update schedule API");
+                // Fallback: manual update jika response tidak ada data
+                setSchedules(prev => prev.map(schedule => 
+                    schedule.schedule_id == scheduleId ? { ...schedule, ...updateData } : schedule
+                ));
+                console.log("🔄 Applied fallback manual update");
             }
             
             return { success: true };
         } catch (err) {
-            console.error("Error updating schedule:", err);
+            console.error("❌ Error updating schedule:", err);
+            
+            // Jika optimistic update gagal, refresh data
+            console.log("🔄 Optimistic update failed, refreshing schedules...");
+            try {
+                const res = await axios.get(`${API_BASE}/api/schedules`);
+                if (res.data?.data) {
+                    setSchedules(res.data.data);
+                    console.log("✅ Schedules refreshed after failed update");
+                }
+            } catch (refreshErr) {
+                console.error("❌ Failed to refresh schedules:", refreshErr);
+            }
+            
             throw new Error(err.response?.data?.message || "Gagal mengupdate jadwal");
         }
     };
@@ -368,101 +459,218 @@ const SprayingControl = () => {
     };
 
     return (
-        <div className="mt-3 grid grid-cols-1 gap-5">
-            <div className="bg-white rounded-xl shadow-md overflow-hidden">
-                <div className="bg-gradient-to-r from-purple-500 to-indigo-600 p-6 mb-8">
-                    <h6 className="text-white font-bold text-2xl tracking-wide">
-                        Kontrol Penyemprotan
-                    </h6>
+        <div className="min-h-screen bg-gray-50 p-4">
+            <div className="max-w-7xl mx-auto">
+                {/* Header Section */}
+                <div className="mb-6">
+                    <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+                        <div className="flex items-center justify-between">
+                            <div className="flex items-center space-x-4">
+                                <div className="w-10 h-10 bg-blue-600 rounded-lg flex items-center justify-center">
+                                    <svg className="w-5 h-5 text-white" fill="currentColor" viewBox="0 0 24 24">
+                                        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
+                                    </svg>
+                                </div>
+                                <div>
+                                    <h1 className="text-2xl font-bold text-gray-900">
+                                        Sistem Kontrol Penyemprotan
+                                    </h1>
+                                    <p className="text-gray-600 text-sm">Kelola dan pantau sistem penyemprotan otomatis</p>
+                                </div>
+                            </div>
+                            <div className="hidden lg:flex items-center space-x-2 text-sm text-gray-500">
+                                <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                                <span>Real-time monitoring</span>
+                            </div>
+                        </div>
+                    </div>
                 </div>
-                <div className="px-4 pb-4">
-                    <div className="overflow-x-auto">
-                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-6">
-                            {/* Kolom Status & Kontrol Manual */}
-                            <div className="p-6 bg-white border border-gray-200 rounded-xl shadow-lg transform hover:scale-105 transition-transform duration-300">
-                                <h3 className="text-xl font-semibold text-gray-800 mb-4">Kontrol Manual Pompa</h3>
-                                <div className="p-6 bg-gray-50 rounded-lg">
-                                    <div className="flex items-center justify-between">
-                                        <div className="flex flex-col items-start">
-                                            <p className="text-gray-500 text-sm">Status Pompa</p>
-                                            <div className="flex items-center mt-2">
-                                                <div className={`w-3 h-3 rounded-full mr-2 ${pumpStatus ? 'bg-green-500' : 'bg-red-500'} ${statusTransition ? 'animate-pulse' : ''}`}></div>
-                                                <span className={`font-semibold ${pumpStatus ? 'text-green-600' : 'text-red-600'}`}>
-                                                    {pumpStatus ? "AKTIF" : "NONAKTIF"}
-                                                </span>
-                                            </div>
-                                            <p className="text-gray-500 text-xs mt-1">
-                                                {pumpStatus ? "Pompa sedang beroperasi (kontrol manual)" : "Pompa tidak aktif"}
-                                            </p>
+
+                {/* Main Control Panel */}
+                <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 mb-6">
+                    {/* Status Overview Card */}
+                    <div className="xl:col-span-1">
+                        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 h-full">
+                            <div className="flex items-center justify-between mb-4">
+                                <h3 className="text-lg font-semibold text-gray-900">Status Perangkat</h3>
+                                <div className={`w-3 h-3 rounded-full ${pumpStatus ? 'bg-green-500' : 'bg-red-500'} ${statusTransition ? 'animate-pulse' : ''}`}></div>
+                            </div>
+                            
+                            {/* Status Indicator */}
+                            <div className="flex flex-col items-center mb-6">
+                                <div className={`relative w-24 h-24 rounded-full flex items-center justify-center mb-3 transition-all duration-300
+                                    ${pumpStatus 
+                                        ? 'bg-green-500 shadow-lg shadow-green-500/25' 
+                                        : 'bg-red-500 shadow-lg shadow-red-500/25'
+                                    }`}>
+                                    {pumpStatus ? (
+                                        <svg className="w-10 h-10 text-white" fill="currentColor" viewBox="0 0 24 24">
+                                            <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
+                                        </svg>
+                                    ) : (
+                                        <svg className="w-10 h-10 text-white" fill="currentColor" viewBox="0 0 24 24">
+                                            <path d="M12 2C6.47 2 2 6.47 2 12s4.47 10 10 10 10-4.47 10-10S17.53 2 12 2zm5 13.59L15.59 17 12 13.41 8.41 17 7 15.59 10.59 12 7 8.41 8.41 7 12 10.59 15.59 7 17 8.41 13.41 12 17 15.59z"/>
+                                        </svg>
+                                    )}
+                                </div>
+                                
+                                <h4 className={`text-xl font-semibold ${pumpStatus ? 'text-green-600' : 'text-red-600'}`}>
+                                    {pumpStatus ? "SISTEM AKTIF" : "SISTEM NONAKTIF"}
+                                </h4>
+                                <p className="text-gray-500 text-center text-sm mt-1">
+                                    {pumpStatus ? "Pompa beroperasi dalam mode manual" : "Pompa dalam keadaan standby"}
+                                </p>
+                            </div>
+
+                            {/* Device Info */}
+                            <div className="space-y-3">
+                                <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                                    <span className="text-gray-600 font-medium text-sm">Device ID</span>
+                                    <span className="text-gray-800 font-mono text-xs">{DEVICE_ID}</span>
+                                </div>
+                                <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                                    <span className="text-gray-600 font-medium text-sm">Connection</span>
+                                    <span className="flex items-center space-x-2">
+                                        <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                                        <span className="text-green-600 font-medium text-sm">Online</span>
+                                    </span>
+                                </div>
+                            </div>
+
+                            {/* Error Display */}
+                            {error && (
+                                <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-lg">
+                                    <div className="flex items-start space-x-2">
+                                        <svg className="w-4 h-4 text-red-500 mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                                            <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                                        </svg>
+                                        <div>
+                                            <h5 className="text-red-800 font-medium text-sm">Peringatan Sistem</h5>
+                                            <p className="text-red-700 text-xs mt-1">{error}</p>
                                         </div>
-                                        
-                                        <div className={`flex items-center justify-center w-20 h-20 rounded-full 
-                                            ${pumpStatus ? 'bg-green-100' : 'bg-red-100'} 
-                                            transition-all duration-300 ease-in-out`}>
-                                            {pumpStatus ? (
-                                                <svg className="w-12 h-12 text-green-500" fill="currentColor" viewBox="0 0 20 20">
-                                                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+
+                    {/* Control Panel */}
+                    <div className="xl:col-span-2">
+                        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 h-full">
+                            <h3 className="text-lg font-semibold text-gray-900 mb-4">Kontrol Manual</h3>
+                            
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 h-full">
+                                {/* ON Button */}
+                                <button
+                                    className={`rounded-lg p-6 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-green-500/20 ${
+                                        loading || pumpStatus === true 
+                                            ? 'bg-gray-100 cursor-not-allowed' 
+                                            : 'bg-green-500 hover:bg-green-600 shadow-md hover:shadow-lg'
+                                    }`}
+                                    onClick={() => handlePumpControl("on")}
+                                    disabled={loading || pumpStatus === true}
+                                >
+                                    <div className="flex flex-col items-center justify-center space-y-3">
+                                        <div className={`w-12 h-12 rounded-full flex items-center justify-center ${
+                                            loading || pumpStatus === true 
+                                                ? 'bg-gray-200' 
+                                                : 'bg-white/20'
+                                        }`}>
+                                            {loading ? (
+                                                <svg className="w-6 h-6 text-gray-400 animate-spin" fill="none" viewBox="0 0 24 24">
+                                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                                                 </svg>
                                             ) : (
-                                                <svg className="w-12 h-12 text-red-500" fill="currentColor" viewBox="0 0 20 20">
-                                                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                                                <svg className={`w-6 h-6 ${loading || pumpStatus === true ? 'text-gray-400' : 'text-white'}`} fill="currentColor" viewBox="0 0 24 24">
+                                                    <path d="M8 5v14l11-7z"/>
                                                 </svg>
                                             )}
                                         </div>
+                                        <div className="text-center">
+                                            <h4 className={`text-lg font-semibold ${loading || pumpStatus === true ? 'text-gray-400' : 'text-white'}`}>
+                                                NYALAKAN
+                                            </h4>
+                                            <p className={`text-sm ${loading || pumpStatus === true ? 'text-gray-400' : 'text-white/80'}`}>
+                                                {pumpStatus === true ? 'Sudah Aktif' : 'Aktifkan Pompa'}
+                                            </p>
+                                        </div>
                                     </div>
-                                    
-                                    {/* Animation removed as requested */}
-                                    
-                                    {/* Notification area */}
-                                    <div className="mt-4 min-h-[40px]">
-                                        {error && (
-                                            <div className="bg-red-50 text-red-600 text-sm p-2 rounded-md flex items-center">
-                                                <svg className="w-4 h-4 mr-1" fill="currentColor" viewBox="0 0 20 20">
-                                                    <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                                </button>
+
+                                {/* OFF Button */}
+                                <button
+                                    className={`rounded-lg p-6 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-red-500/20 ${
+                                        loading || pumpStatus === false 
+                                            ? 'bg-gray-100 cursor-not-allowed' 
+                                            : 'bg-red-500 hover:bg-red-600 shadow-md hover:shadow-lg'
+                                    }`}
+                                    onClick={() => handlePumpControl("off")}
+                                    disabled={loading || pumpStatus === false}
+                                >
+                                    <div className="flex flex-col items-center justify-center space-y-3">
+                                        <div className={`w-12 h-12 rounded-full flex items-center justify-center ${
+                                            loading || pumpStatus === false 
+                                                ? 'bg-gray-200' 
+                                                : 'bg-white/20'
+                                        }`}>
+                                            {loading ? (
+                                                <svg className="w-6 h-6 text-gray-400 animate-spin" fill="none" viewBox="0 0 24 24">
+                                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                                                 </svg>
-                                                {error}
-                                            </div>
-                                        )}
+                                            ) : (
+                                                <svg className={`w-6 h-6 ${loading || pumpStatus === false ? 'text-gray-400' : 'text-white'}`} fill="currentColor" viewBox="0 0 24 24">
+                                                    <path d="M6 6h12v12H6z"/>
+                                                </svg>
+                                            )}
+                                        </div>
+                                        <div className="text-center">
+                                            <h4 className={`text-lg font-semibold ${loading || pumpStatus === false ? 'text-gray-400' : 'text-white'}`}>
+                                                MATIKAN
+                                            </h4>
+                                            <p className={`text-sm ${loading || pumpStatus === false ? 'text-gray-400' : 'text-white/80'}`}>
+                                                {pumpStatus === false ? 'Sudah Nonaktif' : 'Matikan Pompa'}
+                                            </p>
+                                        </div>
                                     </div>
-                                </div>
-                                
-                                <div className="mt-6 grid grid-cols-2 gap-4">
-                                    <button
-                                        className="flex items-center justify-center bg-green-500 hover:bg-green-600 text-white font-medium py-3 px-4 rounded-lg shadow-md hover:shadow-lg transition-all duration-300 disabled:bg-gray-300 disabled:text-gray-500 disabled:cursor-not-allowed"
-                                        onClick={() => handlePumpControl("on")}
-                                        disabled={loading || pumpStatus === true}
-                                    >
-                                        <svg className="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20"><path d="M4.555 5.168A1 1 0 003 6v8a1 1 0 001.555.832l6-4a1 1 0 000-1.664l-6-4z"></path></svg>
-                                        Nyalakan Pompa
-                                    </button>
-                                    <button
-                                        className="flex items-center justify-center bg-red-500 hover:bg-red-600 text-white font-medium py-3 px-4 rounded-lg shadow-md hover:shadow-lg transition-all duration-300 disabled:bg-gray-300 disabled:text-gray-500 disabled:cursor-not-allowed"
-                                        onClick={() => handlePumpControl("off")}
-                                        disabled={loading || pumpStatus === false}
-                                    >
-                                        <svg className="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20"><path d="M5 6a1 1 0 00-1 1v6a1 1 0 001 1h8a1 1 0 001-1V7a1 1 0 00-1-1H5z"></path></svg>
-                                        Matikan Pompa
-                                    </button>
-                                </div>
+                                </button>
                             </div>
                         </div>
+                    </div>
+                </div>
 
-                        {/* Spraying Schedule Section using JadwalSection Component */}
-                        <div className="mt-6">
-                            <JadwalSection
-                                schedules={schedules}
-                                scheduleLoading={scheduleLoading}
-                                scheduleError={scheduleError}
-                                devices={devices}
-                                devicesLoading={devicesLoading}
-                                onAddSchedule={handleAddSchedule}
-                                onUpdateSchedule={handleUpdateSchedule}
-                                onDeleteSchedule={handleDeleteSchedule}
-                                onToggleScheduleStatus={handleToggleScheduleStatus}
-                                showAddModal={showAddModal}
-                                setShowAddModal={setShowAddModal}
-                            />
+                {/* Schedule Management Section */}
+                <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+                    <div className="bg-blue-600 p-6">
+                        <div className="flex items-center space-x-3">
+                            <div className="w-10 h-10 bg-white/20 rounded-lg flex items-center justify-center">
+                                <svg className="w-5 h-5 text-white" fill="currentColor" viewBox="0 0 24 24">
+                                    <path d="M19 3h-1V1h-2v2H8V1H6v2H5c-1.11 0-1.99.9-1.99 2L3 19c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V8h14v11zM7 10h5v5H7z"/>
+                                </svg>
+                            </div>
+                            <div>
+                                <h3 className="text-xl font-bold text-white">Jadwal Penyemprotan</h3>
+                                <p className="text-blue-100 text-sm">Kelola jadwal otomatis untuk sistem penyemprotan</p>
+                            </div>
                         </div>
+                    </div>
+                    
+                    <div className="p-6">
+                        <JadwalSection
+                            schedules={schedules}
+                            scheduleLoading={scheduleLoading}
+                            scheduleError={scheduleError}
+                            devices={devices}
+                            devicesLoading={devicesLoading}
+                            onAddSchedule={handleAddSchedule}
+                            onUpdateSchedule={handleUpdateSchedule}
+                            onDeleteSchedule={handleDeleteSchedule}
+                            onToggleScheduleStatus={handleToggleScheduleStatus}
+                            onRefreshSchedules={refreshSchedules}
+                            showAddModal={showAddModal}
+                            setShowAddModal={setShowAddModal}
+                        />
                     </div>
                 </div>
             </div>

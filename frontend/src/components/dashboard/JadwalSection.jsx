@@ -13,6 +13,7 @@ const JadwalSection = ({
     onUpdateSchedule,
     onDeleteSchedule,
     onToggleScheduleStatus,
+    onRefreshSchedules, // Callback untuk refresh data jika diperlukan
     showAddModal = false,
     setShowAddModal
 }) => {    // Form state for adding new schedule
@@ -22,13 +23,16 @@ const JadwalSection = ({
         schedule_type: 'one-time',
         start_time: '',
         end_time: '',
-        action_type: 'turn_on',
+        action_type: 'turn_on', // Fixed to only turn on pump
         is_active: true
     });
 
     // Edit schedule state
     const [editSchedule, setEditSchedule] = useState(null);
     const [showEditModal, setShowEditModal] = useState(false);
+    
+    // Success message state
+    const [successMessage, setSuccessMessage] = useState(null);
 
     const [formLoading, setFormLoading] = useState(false);
     const [formError, setFormError] = useState(null);
@@ -93,6 +97,11 @@ const JadwalSection = ({
             console.log('Device ID selected:', processedValue, 'Type:', typeof processedValue);
         }
 
+        // Force action_type to always be 'turn_on' for pump activation only
+        if (name === 'action_type') {
+            processedValue = 'turn_on';
+        }
+
         setNewSchedule(prev => ({
             ...prev,
             [name]: type === 'checkbox' ? checked : processedValue
@@ -137,7 +146,13 @@ const JadwalSection = ({
             console.log('Schedule data being sent:', {
                 ...newSchedule,
                 device_id: selectedDeviceId
-            });            await onAddSchedule(newSchedule);
+            });
+
+            // Save current count for verification
+            const currentCount = schedules?.length || 0;
+            console.log('📊 Before add - current schedules count:', currentCount);
+
+            await onAddSchedule(newSchedule);
 
             // Reset form
             setNewSchedule({
@@ -146,14 +161,33 @@ const JadwalSection = ({
                 schedule_type: 'one-time',
                 start_time: '',
                 end_time: '',
-                action_type: 'turn_on',
+                action_type: 'turn_on', // Fixed to only turn on pump
                 is_active: true
             });
 
             // Close modal
             setShowAddModal(false);
 
-            console.log('Schedule added successfully');
+            // Show success message
+            setSuccessMessage('Jadwal berhasil ditambahkan!');
+            setTimeout(() => setSuccessMessage(null), 3000); // Hide after 3 seconds
+
+            // Force table update
+            setTableUpdateKey(prev => prev + 1);
+
+            // Verify data was added correctly after a delay
+            setTimeout(() => {
+                const newCount = schedules?.length || 0;
+                console.log('🔄 Post-add verification - schedules count:', newCount);
+                if (newCount === currentCount) {
+                    console.log('⚠️ Schedule count unchanged, triggering refresh...');
+                    if (onRefreshSchedules) {
+                        onRefreshSchedules();
+                    }
+                }
+            }, 200);
+
+            console.log('✅ Schedule added successfully');
             // No need to refresh - parent handles optimistic updates
 
         } catch (error) {
@@ -165,6 +199,10 @@ const JadwalSection = ({
 
     // Handle edit schedule
     const handleEdit = (schedule) => {
+        // Clear any existing success messages
+        setSuccessMessage(null);
+        setFormError(null);
+        
         setEditSchedule({
             schedule_id: schedule.schedule_id,
             device_id: schedule.device_id,
@@ -172,7 +210,7 @@ const JadwalSection = ({
             schedule_type: schedule.schedule_type,
             start_time: schedule.start_time,
             end_time: schedule.end_time,
-            action_type: schedule.action_type,
+            action_type: 'turn_on', // Fixed to only turn on pump
             is_active: schedule.is_active
         });
         setShowEditModal(true);
@@ -187,6 +225,11 @@ const JadwalSection = ({
         if (name === 'device_id' && value) {
             const numValue = parseInt(value);
             processedValue = isNaN(numValue) ? value : numValue;
+        }
+
+        // Force action_type to always be 'turn_on' for pump activation only
+        if (name === 'action_type') {
+            processedValue = 'turn_on';
         }
 
         setEditSchedule(prev => ({
@@ -232,6 +275,7 @@ const JadwalSection = ({
             const updateData = { ...editSchedule };
             delete updateData.schedule_id;
             updateData.device_id = selectedDeviceId; // pastikan integer
+            updateData.action_type = 'turn_on'; // Ensure action is always turn_on
             
             console.log('JadwalSection - About to update schedule:', {
                 scheduleId: scheduleId,
@@ -240,19 +284,68 @@ const JadwalSection = ({
                 originalSchedule: editSchedule
             });
 
+            // Save current schedules count for verification
+            const currentCount = schedules?.length || 0;
+            console.log('📊 Before update - current schedules count:', currentCount);
+
             await onUpdateSchedule(scheduleId, updateData);
             
-            console.log('JadwalSection - Schedule update completed successfully');
+            console.log('✅ JadwalSection - Schedule update completed successfully');
 
-            // Tutup modal dan reset state
+            // Tutup modal dan reset state dengan sedikit delay untuk user feedback
             setShowEditModal(false);
             setEditSchedule(null);
+            setFormError(null);
 
-            console.log('JadwalSection - Schedule update completed successfully');
+            // Show success message
+            setSuccessMessage('Jadwal berhasil diperbarui!');
+            setTimeout(() => setSuccessMessage(null), 3000); // Hide after 3 seconds
 
-            // No need to refresh schedules here - parent handles optimistic updates
+            // Force table update to ensure React detects the changes
+            setTableUpdateKey(prev => prev + 1);
+
+            console.log('✅ Schedule updated successfully - table should reflect changes immediately');
+            console.log('📊 Current schedules in component:', schedules?.length || 0);
+
+            // Verify update after a short delay
+            setTimeout(() => {
+                const newCount = schedules?.length || 0;
+                console.log('🔄 Post-update verification - schedules count:', newCount);
+                
+                // Check if data actually changed
+                const updatedSchedule = schedules?.find(s => s.schedule_id == scheduleId);
+                if (updatedSchedule) {
+                    console.log('✅ Updated schedule found:', {
+                        id: updatedSchedule.schedule_id,
+                        title: updatedSchedule.title,
+                        is_active: updatedSchedule.is_active,
+                        start_time: updatedSchedule.start_time
+                    });
+                    
+                    // Verify if the update actually took effect
+                    const hasCorrectData = updatedSchedule.title === updateData.title && 
+                                          updatedSchedule.is_active === updateData.is_active &&
+                                          updatedSchedule.start_time === updateData.start_time;
+                    
+                    if (!hasCorrectData) {
+                        console.log('⚠️ Data not updated correctly, triggering refresh...');
+                        if (onRefreshSchedules) {
+                            onRefreshSchedules();
+                        }
+                    }
+                } else {
+                    console.log('❌ Updated schedule not found in current data, triggering refresh...');
+                    if (onRefreshSchedules) {
+                        onRefreshSchedules();
+                    }
+                }
+                
+                // Additional force update if needed
+                setTableUpdateKey(prev => prev + 1);
+            }, 300); // Increased delay to 300ms
 
         } catch (error) {
+            console.error('❌ JadwalSection - Schedule update failed:', error);
             setFormError(error.message);
         } finally {
             setFormLoading(false);
@@ -261,11 +354,32 @@ const JadwalSection = ({
     const handleDelete = async (scheduleId) => {
         if (window.confirm('Apakah Anda yakin ingin menghapus jadwal ini?')) {
             try {
-                console.log('Deleting schedule ID:', scheduleId);
+                const currentCount = schedules?.length || 0;
+                console.log('Deleting schedule ID:', scheduleId, 'Current count:', currentCount);
+                
                 await onDeleteSchedule(scheduleId);
                 
+                // Show success message
+                setSuccessMessage('Jadwal berhasil dihapus!');
+                setTimeout(() => setSuccessMessage(null), 3000);
+                
+                // Force table update
+                setTableUpdateKey(prev => prev + 1);
+                
+                // Verify deletion after a delay
+                setTimeout(() => {
+                    const newCount = schedules?.length || 0;
+                    console.log('🔄 Post-delete verification - schedules count:', newCount, 'Expected:', currentCount - 1);
+                    if (newCount !== currentCount - 1) {
+                        console.log('⚠️ Delete count mismatch, triggering refresh...');
+                        if (onRefreshSchedules) {
+                            onRefreshSchedules();
+                        }
+                    }
+                }, 200);
+                
                 // No need to refresh - parent handles optimistic updates
-                console.log('Schedule deleted successfully');
+                console.log('✅ Schedule deleted successfully');
             } catch (error) {
                 console.error('Error deleting schedule:', error);
                 alert('Gagal menghapus jadwal: ' + error.message);
@@ -274,11 +388,44 @@ const JadwalSection = ({
     };    // Handle toggle schedule status
     const handleToggleStatus = async (scheduleId) => {
         try {
-            console.log('Toggling schedule status for ID:', scheduleId);
+            const originalSchedule = schedules?.find(s => s.schedule_id == scheduleId);
+            console.log('Toggling schedule status for ID:', scheduleId, 'Current status:', originalSchedule?.is_active);
+            
             await onToggleScheduleStatus(scheduleId);
             
+            // Show success message
+            setSuccessMessage('Status jadwal berhasil diubah!');
+            setTimeout(() => setSuccessMessage(null), 3000);
+            
+            // Force table update
+            setTableUpdateKey(prev => prev + 1);
+            
+            // Verify toggle after a delay
+            setTimeout(() => {
+                const updatedSchedule = schedules?.find(s => s.schedule_id == scheduleId);
+                if (updatedSchedule && originalSchedule) {
+                    const statusChanged = updatedSchedule.is_active !== originalSchedule.is_active;
+                    console.log('🔄 Post-toggle verification:', {
+                        old: originalSchedule.is_active,
+                        new: updatedSchedule.is_active,
+                        changed: statusChanged
+                    });
+                    if (!statusChanged) {
+                        console.log('⚠️ Status not changed, triggering refresh...');
+                        if (onRefreshSchedules) {
+                            onRefreshSchedules();
+                        }
+                    }
+                } else {
+                    console.log('⚠️ Schedule not found after toggle, triggering refresh...');
+                    if (onRefreshSchedules) {
+                        onRefreshSchedules();
+                    }
+                }
+            }, 200);
+            
             // No need to refresh - parent handles optimistic updates
-            console.log('Schedule status toggled successfully');
+            console.log('✅ Schedule status toggled successfully');
         } catch (error) {
             console.error('Error toggling schedule status:', error);
             alert('Gagal mengubah status jadwal: ' + error.message);
@@ -286,13 +433,35 @@ const JadwalSection = ({
     };    // Use only real schedules from database - no filtering
     const displaySchedules = Array.isArray(schedules) ? schedules : [];
 
-    // Debug logging for display schedules (removed to prevent excessive logging)
-    /*
+    // Force re-render counter for table updates
+    const [tableUpdateKey, setTableUpdateKey] = useState(0);
+
+    // Debug logging for display schedules when schedules change
     useEffect(() => {
-        console.log('JadwalSection - displaySchedules:', displaySchedules);
-        console.log('JadwalSection - displaySchedules length:', displaySchedules.length);
-    }, [displaySchedules]);
-    */
+        console.log('📋 JadwalSection - Schedules prop changed:', {
+            count: schedules?.length || 0,
+            timestamp: new Date().toLocaleTimeString(),
+            isArray: Array.isArray(schedules),
+            firstSchedule: schedules?.[0] ? {
+                id: schedules[0].schedule_id,
+                title: schedules[0].title,
+                is_active: schedules[0].is_active
+            } : null
+        });
+        
+        if (schedules && schedules.length > 0) {
+            console.log('📊 All schedules in table:', schedules.map(s => ({
+                id: s.schedule_id,
+                title: s.title,
+                device_id: s.device_id,
+                is_active: s.is_active,
+                start_time: s.start_time
+            })));
+        }
+
+        // Force table re-render when schedules change
+        setTableUpdateKey(prev => prev + 1);
+    }, [schedules]); // Re-run when schedules prop changes
 
     // No auto-refresh functions - data provided by parent component only
 
@@ -328,6 +497,9 @@ const JadwalSection = ({
                                 alert('Sedang memuat daftar devices. Mohon tunggu sebentar...');
                                 return;
                             }
+                            // Clear any existing success messages
+                            setSuccessMessage(null);
+                            setFormError(null);
                             setShowAddModal(true);
                         }}
                         className="px-4 py-2 bg-green-600 text-white text-sm font-medium rounded-md hover:bg-green-700 flex items-center"
@@ -339,6 +511,18 @@ const JadwalSection = ({
                     </button>
                 </div>
             </div>
+
+            {/* Success Message */}
+            {successMessage && (
+                <div className="bg-green-50 border border-green-200 rounded-md p-4">
+                    <div className="flex items-center">
+                        <svg className="w-5 h-5 text-green-400 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        <span className="text-green-800 font-medium">{successMessage}</span>
+                    </div>
+                </div>
+            )}
 
             {/* Error Display */}
             {scheduleError && (
@@ -353,7 +537,7 @@ const JadwalSection = ({
                     </div>
                 </div>
             )}            {/* Schedule Table */}
-            <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+            <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden" key={`table-${tableUpdateKey}`}>
                 {scheduleLoading ? (
                     <div className="p-8 text-center">
                         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
@@ -403,14 +587,14 @@ const JadwalSection = ({
                                     </th>
                                 </tr>
                             </thead>                            <tbody className="bg-white divide-y divide-gray-200">
-                                {displaySchedules.map((schedule) => {
-                                    console.log('Rendering schedule:', schedule); // Debug log for each schedule
-
+                                {displaySchedules.map((schedule, index) => {
+                                    // Create a comprehensive key that changes when any schedule data changes
+                                    const uniqueKey = `${schedule.schedule_id}-${schedule.title}-${schedule.is_active}-${schedule.start_time}-${schedule.end_time}-${schedule.device_id}-${schedule.schedule_type}-${tableUpdateKey}-${index}`;
+                                    
                                     const device = devices.find(d => d.device_id == schedule.device_id);
-                                    console.log('Found device for schedule:', device); // Debug log for device
 
                                     return (
-                                        <tr key={schedule.schedule_id} className="hover:bg-gray-50"><td className="px-6 py-4 whitespace-nowrap">
+                                        <tr key={uniqueKey} className="hover:bg-gray-50"><td className="px-6 py-4 whitespace-nowrap">
                                             <div>
                                                 <div className="text-sm font-medium text-gray-900">
                                                     {schedule.title || 'Tidak ada judul'}
@@ -436,11 +620,8 @@ const JadwalSection = ({
                                                 </div>
                                             </td>
                                             <td className="px-6 py-4 whitespace-nowrap">
-                                                <span className="text-sm text-gray-900">
-                                                    {schedule.action_type === 'turn_on' ? 'Nyalakan' :
-                                                        schedule.action_type === 'turn_off' ? 'Matikan' :
-                                                            schedule.action_type === 'toggle' ? 'Toggle' :
-                                                                schedule.action_type || 'Unknown'}
+                                                <span className="px-3 py-1 bg-green-100 text-green-800 text-xs font-medium rounded-full">
+                                                    Nyalakan Pompa
                                                 </span>
                                             </td>
                                             <td className="px-6 py-4 whitespace-nowrap">
@@ -573,7 +754,7 @@ const JadwalSection = ({
                                         <option value="one-time">Sekali</option>
                                         <option value="daily">Harian</option>
                                         <option value="weekly">Mingguan</option>
-                                        <option value="custom">Custom</option>
+                                        <option value="monthly">Bulanan</option>
                                     </select>
                                 </div>
 
@@ -602,16 +783,10 @@ const JadwalSection = ({
 
                                 <div>
                                     <label className="block text-sm font-medium text-gray-700 mb-1">Aksi</label>
-                                    <select
-                                        name="action_type"
-                                        value={newSchedule.action_type}
-                                        onChange={handleInputChange}
-                                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                    >
-                                        <option value="turn_on">Nyalakan</option>
-                                        <option value="turn_off">Matikan</option>
-                                        <option value="toggle">Toggle</option>
-                                    </select>
+                                    <div className="w-full px-3 py-2 border border-gray-300 rounded-md bg-green-50 text-green-800 font-medium">
+                                        ✓ Nyalakan Pompa (Otomatis)
+                                    </div>
+                                    <p className="mt-1 text-xs text-gray-500">Jadwal akan otomatis menyalakan pompa pada waktu yang ditentukan</p>
                                 </div>
 
                                 <div className="flex items-center">
@@ -726,7 +901,7 @@ const JadwalSection = ({
                                         <option value="one-time">Sekali</option>
                                         <option value="daily">Harian</option>
                                         <option value="weekly">Mingguan</option>
-                                        <option value="custom">Custom</option>
+                                        <option value="monthly">Bulanan</option>
                                     </select>
                                 </div>
 
@@ -756,16 +931,10 @@ const JadwalSection = ({
 
                                 <div>
                                     <label className="block text-sm font-medium text-gray-700 mb-1">Aksi</label>
-                                    <select
-                                        name="action_type"
-                                        value={editSchedule.action_type}
-                                        onChange={handleEditInputChange}
-                                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                    >
-                                        <option value="turn_on">Nyalakan</option>
-                                        <option value="turn_off">Matikan</option>
-                                        <option value="toggle">Toggle</option>
-                                    </select>
+                                    <div className="w-full px-3 py-2 border border-gray-300 rounded-md bg-green-50 text-green-800 font-medium">
+                                        ✓ Nyalakan Pompa (Otomatis)
+                                    </div>
+                                    <p className="mt-1 text-xs text-gray-500">Jadwal akan otomatis menyalakan pompa pada waktu yang ditentukan</p>
                                 </div>
 
                                 <div className="flex items-center">

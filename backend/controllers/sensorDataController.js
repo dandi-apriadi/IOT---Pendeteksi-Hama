@@ -931,20 +931,60 @@ export const getPowerConsumptionStats = async (req, res) => {
 };
 
 /**
- * Ambil semua data sensor dari database (untuk kebutuhan analisis/data mentah)
+ * Get all sensor data with flexible filtering
+ * Updated to show all sensor data, not just insect detection
  */
 export const getAllSensorData = async (req, res) => {
     try {
-        // Ambil semua data sensor
+        const { limit = 50, include_all = 'true' } = req.query;
+        const parsedLimit = Math.min(parseInt(limit), 200); // Cap at 200 for performance
+        
+        console.log('Fetching all sensor data with limit:', parsedLimit, 'include_all:', include_all);
+
+        // Get all sensor data with device information
         const rawData = await Sensor.findAll({
-            include: [{ model: Device, attributes: ['device_name', 'location'], as: 'device' }],
-            order: [['timestamp', 'DESC']]
+            attributes: [
+                'sensor_id', 'device_id', 'voltage', 'current',
+                'power', 'energy', 'pir_status', 'pump_status',
+                'auto_mode', 'timestamp'
+            ],
+            include: [{ 
+                model: Device, 
+                attributes: ['device_name', 'location'], 
+                as: 'device',
+                required: false // LEFT JOIN instead of INNER JOIN
+            }],
+            order: [['timestamp', 'DESC']],
+            limit: parsedLimit
         });
 
-        // Algoritma deteksi gerak serangga yang lebih ketat:
-        // 1. Serangga terdeteksi jika sensor PIR terus aktif selama 30 detik secara konsisten
-        // 2. Kurangi spam notifikasi dengan memastikan ada jeda minimal 5 menit antar notifikasi
-        
+        console.log(`Found ${rawData.length} sensor readings`);
+
+        // If include_all is true, return all data without complex filtering
+        if (include_all === 'true') {
+            const formattedData = rawData.map(reading => {
+                const data = reading.toJSON();
+                
+                // Format timestamp
+                if (data.timestamp) {
+                    data.timestamp = new Date(data.timestamp).toISOString().slice(0, 19).replace('T', ' ');
+                }
+                
+                // Add basic insect detection flag based on PIR status
+                data.insect_detected = data.pir_status ? true : false;
+                
+                return data;
+            });
+
+            return res.json({ 
+                status: 'success', 
+                message: `Retrieved ${formattedData.length} sensor readings`,
+                count: formattedData.length,
+                data: formattedData 
+            });
+        }
+
+        // Legacy algorithm for strict insect detection (when include_all=false)
         const result = [];
         
         // Track last notification time to prevent spam
@@ -961,12 +1001,12 @@ export const getAllSensorData = async (req, res) => {
             deviceReadings[item.device_id].push(item);
         });
         
-        // Process each device separately
+        // Process each device separately for strict detection
         for (const [deviceId, readings] of Object.entries(deviceReadings)) {
             // Sort readings by timestamp (oldest first)
             readings.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
             
-            // Find consistent motion periods
+            // Find consistent motion periods (5 seconds instead of 30 for more flexible detection)
             let consecutiveActiveTime = 0;
             let lastActiveTime = null;
             let firstActiveReading = null;
@@ -979,7 +1019,7 @@ export const getAllSensorData = async (req, res) => {
                         firstActiveReading = item;
                         lastActiveTime = currentTime;
                         consecutiveActiveTime = 0;
-                    } else if (currentTime - lastActiveTime <= 2000) { // Allow small gaps (2 sec max)
+                    } else if (currentTime - lastActiveTime <= 5000) { // Allow gaps up to 5 seconds
                         consecutiveActiveTime += (currentTime - lastActiveTime);
                     } else {
                         // Reset if there's a gap in activity
@@ -989,21 +1029,13 @@ export const getAllSensorData = async (req, res) => {
                     
                     lastActiveTime = currentTime;
                     
-                    // Check if we have 30 seconds of consecutive activity
-                    if (consecutiveActiveTime >= 30000) { // 30 seconds
-                        // Add to results regardless of notification status
+                    // Check if we have 5 seconds of activity (more flexible than 30 seconds)
+                    if (consecutiveActiveTime >= 5000) {
+                        // Add to results
                         result.push({
                             ...item.toJSON(),
                             insect_detected: true,
                             active_duration: consecutiveActiveTime / 1000 // in seconds
-                        });
-                        
-                        // Send notification (the function will check for cooldown)
-                        await notifyInsectDetection({
-                            device: item.device,
-                            device_id: item.device_id,
-                            timestamp: item.timestamp,
-                            duration: Math.round(consecutiveActiveTime / 1000) // in seconds
                         });
                         
                         // Reset detection to avoid multiple notifications
@@ -1012,18 +1044,87 @@ export const getAllSensorData = async (req, res) => {
                     }
                 } else {
                     // Reset on inactivity
-                    if (consecutiveActiveTime < 30000) { // Only reset if we haven't reached threshold
+                    if (consecutiveActiveTime < 5000) { // Only reset if we haven't reached threshold
                         consecutiveActiveTime = 0;
                         firstActiveReading = null;
                     }
                 }
-            } // End of readings loop
-        } // End of device loop
+            }
+        }
         
-        res.json({ status: 'success', data: result });
+        res.json({ 
+            status: 'success', 
+            message: `Found ${result.length} insect detections`,
+            count: result.length,
+            data: result 
+        });
     } catch (error) {
         console.error('Error in getAllSensorData:', error);
-        res.status(500).json({ status: 'error', message: error.message });
+        res.status(500).json({ 
+            status: 'error', 
+            message: 'Failed to retrieve sensor data',
+            error: error.message,
+            data: []
+        });
+    }
+};
+
+/**
+ * Get latest sensor data with simplified logic
+ * Returns all recent sensor readings without complex insect detection
+ */
+export const getLatestSensorData = async (req, res) => {
+    try {
+        const { limit = 50 } = req.query;
+        const parsedLimit = Math.min(parseInt(limit), 100); // Cap at 100 for performance
+
+        console.log('Fetching latest sensor data with limit:', parsedLimit);
+
+        // Get latest readings with device information
+        const latestReadings = await Sensor.findAll({
+            attributes: [
+                'sensor_id', 'device_id', 'voltage', 'current',
+                'power', 'energy', 'pir_status', 'pump_status',
+                'auto_mode', 'timestamp'
+            ],
+            include: [{
+                model: Device,
+                attributes: ['device_name', 'location'],
+                as: 'device',
+                required: false // LEFT JOIN instead of INNER JOIN
+            }],
+            order: [['timestamp', 'DESC']],
+            limit: parsedLimit
+        });
+
+        console.log(`Found ${latestReadings.length} sensor readings`);
+
+        // Convert to plain objects and format data
+        const formattedData = latestReadings.map(reading => {
+            const data = reading.toJSON();
+            
+            // Ensure timestamp is formatted properly
+            if (data.timestamp) {
+                data.timestamp = new Date(data.timestamp).toISOString().slice(0, 19).replace('T', ' ');
+            }
+            
+            return data;
+        });
+
+        return res.json({
+            status: 'success',
+            message: `Retrieved ${formattedData.length} latest sensor readings`,
+            count: formattedData.length,
+            data: formattedData
+        });
+    } catch (error) {
+        console.error('Error in getLatestSensorData:', error);
+        return res.status(500).json({
+            status: 'error',
+            message: 'Failed to retrieve latest sensor data',
+            error: error.message,
+            data: []
+        });
     }
 };
 
@@ -1449,3 +1550,123 @@ export const notifyScheduleResult = async ({ device, device_id, timestamp, succe
         console.error('Failed to create schedule notification:', err.message);
     }
 };
+
+// Get comprehensive insect activity statistics from database
+export const getInsectActivityStats = async (req, res) => {
+    try {
+        const db = await connectDB();
+        
+        // Get all sensor data with PIR detections (last 30 days)
+        const thirtyDaysAgo = new Date();
+        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+        
+        const query = `
+            SELECT 
+                s.pir_status,
+                s.pump_status,
+                s.timestamp,
+                s.voltage,
+                s.current,
+                s.power,
+                s.device_id,
+                d.device_name,
+                d.location
+            FROM sensor_data s
+            LEFT JOIN devices d ON s.device_id = d.device_id
+            WHERE s.timestamp >= ?
+            ORDER BY s.timestamp DESC
+        `;
+        
+        const [rows] = await db.execute(query, [thirtyDaysAgo.toISOString().slice(0, 19).replace('T', ' ')]);
+        
+        // Calculate statistics
+        const totalDetections = rows.filter(row => row.pir_status === 1).length;
+        const totalPumpActivations = rows.filter(row => row.pump_status === 1).length;
+        const bothActive = rows.filter(row => row.pir_status === 1 && row.pump_status === 1).length;
+        
+        // Calculate efficiency (pump activations when insect detected)
+        const efficiency = totalDetections > 0 ? Math.round((bothActive / totalDetections) * 100) : 0;
+        
+        // Find peak activity hour
+        const hourlyActivity = {};
+        rows.forEach(row => {
+            if (row.pir_status === 1 && row.timestamp) {
+                const hour = new Date(row.timestamp).getHours();
+                const hourLabel = `${hour.toString().padStart(2, '0')}:00`;
+                hourlyActivity[hourLabel] = (hourlyActivity[hourLabel] || 0) + 1;
+            }
+        });
+        
+        const peakHour = Object.keys(hourlyActivity).reduce((a, b) => 
+            hourlyActivity[a] > hourlyActivity[b] ? a : b, Object.keys(hourlyActivity)[0]) || '-';
+        const peakDetections = hourlyActivity[peakHour] || 0;
+        
+        // Generate hourly activity data for chart
+        const insectActivityData = [];
+        for (let hour = 0; hour < 24; hour++) {
+            const hourLabel = `${hour.toString().padStart(2, '0')}:00`;
+            const hourDetections = hourlyActivity[hourLabel] || 0;
+            const hourPumpActivations = rows.filter(row => {
+                if (row.timestamp && row.pump_status === 1) {
+                    const rowHour = new Date(row.timestamp).getHours();
+                    return rowHour === hour;
+                }
+                return false;
+            }).length;
+            
+            const hourEfficiency = hourDetections > 0 ? 
+                Math.round((rows.filter(row => {
+                    if (row.timestamp && row.pir_status === 1 && row.pump_status === 1) {
+                        const rowHour = new Date(row.timestamp).getHours();
+                        return rowHour === hour;
+                    }
+                    return false;
+                }).length / hourDetections) * 100) : 0;
+            
+            insectActivityData.push({
+                hour: hourLabel,
+                detections: hourDetections,
+                pumpActivations: hourPumpActivations,
+                efficiency: hourEfficiency
+            });
+        }
+        
+        const stats = {
+            totalDetections,
+            totalPumpActivations,
+            efficiency,
+            peakHour,
+            peakDetections,
+            insectActivityData,
+            dataRange: {
+                from: thirtyDaysAgo.toISOString().slice(0, 10),
+                to: new Date().toISOString().slice(0, 10),
+                totalRecords: rows.length
+            }
+        };
+        
+        res.json({
+            success: true,
+            message: 'Statistik aktivitas serangga berhasil diambil',
+            data: stats
+        });
+        
+    } catch (error) {
+        console.error('Error getting insect activity stats:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Gagal mengambil statistik aktivitas serangga',
+            error: error.message
+        });
+    }
+};
+
+// export {
+//     getLatestReadings,
+//     getSensorHistory,
+//     getDailyConsumption,
+//     getAggregateStats,
+//     getEnergyTrends,
+//     getLatestEnergyData,
+//     getElectricalChartData
+// };

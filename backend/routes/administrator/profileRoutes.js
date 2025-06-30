@@ -5,9 +5,9 @@ import { verifyUser } from '../../middleware/AuthUser.js';
 const router = express.Router();
 
 // Password management
-router.post('/api/change-password', verifyUser, changePassword);
+router.post('/change-password', verifyUser, changePassword);
 
 // Profile management
-router.get('/api/profile', verifyUser, getUserProfile);
+router.get('/', verifyUser, getUserProfile);
 
 export default router;

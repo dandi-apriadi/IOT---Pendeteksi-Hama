@@ -1,7 +1,7 @@
 import express from 'express';
 import * as esp32Controller from "../controllers/esp32Controller.js";
 import * as sensorDataController from "../controllers/sensorDataController.js";
-import { getAllSensorData } from '../controllers/sensorDataController.js';
+import { getAllSensorData, getLatestSensorData, getInsectActivityStats } from '../controllers/sensorDataController.js';
 import { getDueSchedules } from '../controllers/scheduleController.js';
 import SensorData from '../models/sensorModel.js'; // Add import for device status check
 
@@ -259,7 +259,13 @@ router.get('/dashboard-summary/:deviceId', async (req, res) => {
 // Route untuk mengambil semua data sensor (data mentah)
 router.get('/data/all', getAllSensorData);
 
+// Route untuk mengambil data sensor terbaru (simplified)
+router.get('/data/latest', getLatestSensorData);
+
 // Route untuk mengambil jadwal yang sudah jatuh tempo
 router.get('/schedules/trigger-due', getDueSchedules);
+
+// Statistics routes
+router.get('/stats/insect-activity', sensorDataController.getInsectActivityStats);
 
 export default router;

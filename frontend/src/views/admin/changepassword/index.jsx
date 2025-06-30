@@ -7,6 +7,12 @@ import { useSelector } from "react-redux";
 import { API_CONFIG } from "../../../config/apiConfig";
 import axios from "axios";
 
+// Create axios instance with credentials
+const api = axios.create({
+    baseURL: process.env.REACT_APP_API_BASE_URL,
+    withCredentials: true,
+});
+
 const ChangePassword = () => {
     // State for form inputs
     const [currentPassword, setCurrentPassword] = useState("");
@@ -72,11 +78,11 @@ const ChangePassword = () => {
             return;
         }
 
-        setIsSubmitting(true); try {
-            const response = await axios.post(`${API_CONFIG.API_URL}/change-password`, {
+        setIsSubmitting(true);        try {
+            const response = await api.post("/api/profile/change-password", {
                 currentPassword,
                 newPassword,
-                userId: user.user_id // Updated to use the correct property name
+                user_id: user.user_id // Fixed parameter name to match backend
             });
 
             if (response.data.success) {

@@ -1,8 +1,17 @@
 /*
- * Note: The LiquidCrystal_I2C library may show a warning about compatibility with ESP32.
- * This is often just a warning. The code should work with most ESP32-compatible
- * LiquidCrystal_I2C libraries. If you encounter issues, use the library from:
- * https://github.com/johnrickman/LiquidCrystal_I2C
+ * LIBRARY COMPATIBILITY NOTES:
+ * 
+ * LiquidCrystal_I2C Library Warning:
+ * The warning "library LiquidCrystal I2C claims to run on avr architecture(s) and may be 
+ * incompatible with your current board which runs on esp32 architecture(s)" is usually 
+ * just a warning and can be ignored. The library works fine with ESP32.
+ * 
+ * If you encounter issues, try one of these ESP32-compatible libraries:
+ * 1. Use this specific version: https://github.com/johnrickman/LiquidCrystal_I2C
+ * 2. Or install "LiquidCrystal I2C" by Frank de Brabander from Library Manager
+ * 3. Alternative: "ESP32 LiquidCrystal I2C" library
+ * 
+ * The code should work with most ESP32-compatible LiquidCrystal_I2C libraries.
  */
 
 #include <WiFi.h>
@@ -14,8 +23,7 @@
 #include <RTClib.h>
 #include <LiquidCrystal_I2C.h>
 #include <Ticker.h>  // Add Ticker library for timers
-#include <WiFiUdp.h>
-#include <NTPClient.h>
+#include <time.h>    // Add time library for NTP and timezone
 
 // Add these headers for debugging and watchdog
 #include <esp_task_wdt.h>
@@ -26,7 +34,11 @@
 const char* ssid = "Onesta";
 const char* password = "123456788";
 
-// Server configuration
+// NTP and Timezone Configuration for WITA (UTC+8)
+const char* ntpServer = "pool.ntp.org";
+const long gmtOffset_sec = 8 * 3600;  // WITA is UTC+8
+const int daylightOffset_sec = 0;     // No daylight saving in Indonesia
+
 const char* serverHost = "192.168.1.5";  // Replace with your server IP
 const int serverPort = 5000;  // Should match backend PORT environment variable
 const char* httpEndpoint = "/api/esp32/data";
@@ -123,10 +135,20 @@ SemaphoreHandle_t pirNotifySemaphore;
 volatile bool motionDetected = false;
 volatile bool motionNotificationPending = false;
 
-// NTP Client setup
-WiFiUDP ntpUDP;
-// Ganti offset ke GMT+8 (8*3600=28800 detik)
-NTPClient timeClient(ntpUDP, "pool.ntp.org", 8 * 3600, 60000); // GMT+8, update every 60s
+// Schedule Management Structure and Variables
+struct ScheduleItem {
+  int scheduleId;
+  int hour;
+  int minute;
+  String title;
+  bool isActive;
+  bool hasExecutedToday;
+};
+
+const int MAX_SCHEDULES = 10;
+ScheduleItem schedules[MAX_SCHEDULES];
+int scheduleCount = 0;
+int lastExecutedDay = -1; // Track day to reset execution flags
 
 // ---- FUNCTION PROTOTYPES (FORWARD DECLARATIONS) ----
 // This ensures all functions are visible before they're used
@@ -134,6 +156,10 @@ void updateLogTimestamp();
 void logMessage(const char* category, const char* message);
 void logSensorData(bool isValid = true);
 bool isNightTime(DateTime now);
+void initNTPTime();
+void syncTimeWithNTP();
+String getWITATimeString();
+DateTime getWITADateTime();
 void IRAM_ATTR handlePirInterrupt();
 void checkPirSensor();
 void updatePirDisplayMotionStart();
@@ -149,31 +175,56 @@ void registerDevice();
 void handleServerCommand(const char* message);
 void sendPirStatusUpdate();
 void sendPumpStatusUpdate(bool status);
+void sendPumpStatusUpdate(bool status, const char* activationType);
 void sendDataViaWebSocket();
 void sendDataViaHTTP();
 void sendDataToServer();
 void activatePump();
+void activatePump(const char* activationType);
 void deactivatePump();
+void deactivatePump(const char* deactivationType);
 void handlePumpAutomation();
 void checkConnections();
 void updateNextPumpTime();
 void updateDisplays();
-void syncRTCWithNTP();
+void updateScheduleDisplay();  // Add prototype for updateScheduleDisplay
+
+// Command handler prototypes
+void handleTogglePump(String commandId);
+void handlePumpOn(String commandId);
+void handlePumpOff(String commandId);
+void handleSetMode(String mode, String commandId);
+void handleAddSchedule(int hour, int minute, int scheduleId, String title, String commandId);
+void handleRemoveSchedule(int scheduleId, String commandId);
+void handleGetSchedules(String commandId);
+void handlePing(String commandId);
+void handleRestart(String commandId);
+void handleServerAck(DynamicJsonDocument& doc);
+void handleScheduleSyncComplete(DynamicJsonDocument& doc);
+void sendCommandResponse(String command, bool success, String commandId, String message);
+void sendScheduleResponse(String action, bool success, int hour, int minute, String commandId, String message);
+void checkScheduleExecution();
+void updateScheduleDisplay();
+
+// Queue management prototypes
+bool queueCommand(const String& command);
+void processCommandQueue();
 
 // ---- FUNCTION IMPLEMENTATIONS ----
 
 // Utility Functions
 bool rtcAvailable = false;
+bool ntpSynced = false;
+unsigned long lastNtpSync = 0;
+const unsigned long ntpSyncInterval = 3600000; // Sync every hour
 unsigned long programStartTime = 0;
 
 void updateLogTimestamp() {
-  if (rtcAvailable) {
-    DateTime now = rtc.now();
-    sprintf(logTimeBuffer, "%04d-%02d-%02d %02d:%02d:%02d",
-            now.year(), now.month(), now.day(),
-            now.hour(), now.minute(), now.second());
+  if (ntpSynced || rtcAvailable) {
+    String timeStr = getWITATimeString();
+    strcpy(logTimeBuffer, timeStr.c_str());
   } else {
-    // Fallback if RTC is not working - use uptime instead
+    // Fallback if both NTP and RTC are not working - use uptime instead
     unsigned long uptime = millis() - programStartTime;
     unsigned long seconds = uptime / 1000;
     unsigned long minutes = seconds / 60;
@@ -232,15 +283,118 @@ void logSensorData(bool isValid) {
 }
 
 bool isNightTime(DateTime now) {
-  if (!rtcAvailable) {
-    // Default behavior if RTC is not available - assume nighttime between 6PM-5AM
+  if (!rtcAvailable && !ntpSynced) {
+    // Default behavior if both RTC and NTP are not available - assume nighttime between 6PM-5AM
     unsigned long uptime = millis() - programStartTime;
     unsigned long hours = (uptime / 3600000) % 24;
     return (hours >= 18 || hours < 5);
   }
   
-  int hour = now.hour();
+  DateTime witaTime = getWITADateTime();
+  int hour = witaTime.hour();
   return (hour >= 18 || hour < 5);
+}
+
+// NTP and Timezone Functions
+void initNTPTime() {
+  if (!wifiConnected) {
+    logMessage("NTP", "WiFi not connected, cannot sync NTP");
+    return;
+  }
+  
+  logMessage("NTP", "Initializing NTP time synchronization...");
+  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+  
+  // Wait for time to be set
+  time_t now = 0;
+  struct tm timeinfo;
+  int retry = 0;
+  const int retry_count = 15;
+  
+  while (time(&now) < 24 * 3600 && ++retry < retry_count) {
+    logMessage("NTP", "Waiting for system time to be set...");
+    delay(2000);
+  }
+  
+  if (retry < retry_count) {
+    localtime_r(&now, &timeinfo);
+    ntpSynced = true;
+    lastNtpSync = millis();
+    
+    char timeStr[64];
+    strftime(timeStr, sizeof(timeStr), "%Y-%m-%d %H:%M:%S WITA", &timeinfo);
+    logMessage("NTP", ("Time synchronized: " + String(timeStr)).c_str());
+    
+    // Update RTC if available
+    if (rtcAvailable) {
+      DateTime ntpTime = DateTime(timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday,
+                                 timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
+      rtc.adjust(ntpTime);
+      logMessage("RTC", "RTC updated with NTP time");
+    }
+  } else {
+    logMessage("NTP", "Failed to synchronize time with NTP server");
+    ntpSynced = false;
+  }
+}
+
+void syncTimeWithNTP() {
+  if (!wifiConnected) return;
+  
+  // Check if it's time to sync
+  if (millis() - lastNtpSync > ntpSyncInterval) {
+    logMessage("NTP", "Performing periodic NTP sync...");
+    initNTPTime();
+  }
+}
+
+String getWITATimeString() {
+  char timeStr[25];
+  
+  if (ntpSynced) {
+    // Use ESP32 system time (already configured for WITA)
+    time_t now;
+    struct tm timeinfo;
+    time(&now);
+    localtime_r(&now, &timeinfo);
+    
+    strftime(timeStr, sizeof(timeStr), "%d/%m/%y %H:%M:%S", &timeinfo);
+  } else if (rtcAvailable) {
+    // Use RTC time
+    DateTime now = rtc.now();
+    sprintf(timeStr, "%02d/%02d/%02d %02d:%02d:%02d",
+            now.day(), now.month(), now.year() % 100,
+            now.hour(), now.minute(), now.second());
+  } else {
+    // Fallback to uptime
+    unsigned long uptime = millis() - programStartTime;
+    unsigned long seconds = (uptime / 1000) % 60;
+    unsigned long minutes = (uptime / 60000) % 60;
+    unsigned long hours = (uptime / 3600000) % 24;
+    
+    sprintf(timeStr, "UP:%02lu:%02lu:%02lu", hours, minutes, seconds);
+  }
+  
+  return String(timeStr);
+}
+
+DateTime getWITADateTime() {
+  if (ntpSynced) {
+    // Use ESP32 system time (already configured for WITA)
+    time_t now;
+    struct tm timeinfo;
+    time(&now);
+    localtime_r(&now, &timeinfo);
+    
+    return DateTime(timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday,
+                   timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
+  } else if (rtcAvailable) {
+    // Use RTC time (assuming it's already set to WITA)
+    return rtc.now();
+  } else {
+    // Fallback - create a dummy DateTime
+    return DateTime(2025, 1, 1, 0, 0, 0);
+  }
 }
 
 // PIR Functions
@@ -397,15 +551,15 @@ void improvedPzemInitialization() {
     
     if (!isnan(testVoltage) && testVoltage > 0) {
       initialized = true;
-      // Serial.println("PZEM initialization successful!");
-      // Serial.printf("Test voltage reading: %.2f V\n", testVoltage);
+      Serial.println("PZEM initialization successful!");
+      Serial.printf("Test voltage reading: %.2f V\n", testVoltage);
       
       float testCurrent = pzem.current();
       float testPower = pzem.power();
       float testEnergy = pzem.energy();
       
-      // Serial.printf("Initial readings - V:%.2f, I:%.3f, P:%.2f, E:%.3f\n", 
-      //              testVoltage, testCurrent, testPower, testEnergy);
+      Serial.printf("Initial readings - V:%.2f, I:%.3f, P:%.2f, E:%.3f\n", 
+                   testVoltage, testCurrent, testPower, testEnergy);
       
       if (!isnan(testVoltage)) lastValid.voltage = testVoltage;
       if (!isnan(testCurrent)) lastValid.current = testCurrent;
@@ -418,9 +572,9 @@ void improvedPzemInitialization() {
     } else {
       retries++;
       
-      // Serial.print("PZEM init attempt ");
-      // Serial.print(retries);
-      // Serial.println(" failed, retrying...");
+      Serial.print("PZEM init attempt ");
+      Serial.print(retries);
+      Serial.println(" failed, retrying...");
       
       lcd1.setCursor(0, 1);
       lcd1.print("PZEM Retry #");
@@ -428,7 +582,7 @@ void improvedPzemInitialization() {
       lcd1.print("  ");
       
       if (retries % 3 == 0) {
-        // Serial.println("Resetting PZEM serial connection...");
+        Serial.println("Resetting PZEM serial connection...");
         Serial2.end();
         delay(500);
         Serial2.begin(9600, SERIAL_8N1, PZEM_RX_PIN, PZEM_TX_PIN);
@@ -440,7 +594,7 @@ void improvedPzemInitialization() {
   }
   
   if (!initialized) {
-    // Serial.println("WARNING: Failed to initialize PZEM after multiple attempts");
+    Serial.println("WARNING: Failed to initialize PZEM after multiple attempts");
     lcd1.setCursor(0, 1);
     lcd1.print("PZEM Failed!   ");
   }
@@ -462,22 +616,11 @@ void readSensorData() {
       sensorData.power = p;
       sensorData.energy = e;
       
-      // Generate timestamp with fallback for RTC failure
-      char timeBuffer[20];
+      // Generate timestamp with WITA timezone
+      sensorData.timestamp = getWITATimeString();
       
-      if (rtcAvailable) {
-        DateTime now = rtc.now();
-        sprintf(timeBuffer, "%04d-%02d-%02d %02d:%02d:%02d", 
-                now.year(), now.month(), now.day(),
-                now.hour(), now.minute(), now.second());
-      } else {
-        unsigned long uptime = millis() - programStartTime;
-        sprintf(timeBuffer, "T+%lu", uptime / 1000);
-      }
-      
-      sensorData.timestamp = String(timeBuffer);
-      
-      sensorData.pumpStatus = pumpActive || (manualPump && !isAutoMode);
+      // Always read actual pump pin state for real-time status
+      sensorData.pumpStatus = digitalRead(pumpPin);
       
       xSemaphoreGive(sensorDataMutex);
     }
@@ -503,16 +646,11 @@ void readSensorData() {
         sensorData.power = isnan(p) ? 0 : p;
         sensorData.energy = isnan(e) ? sensorData.energy : e;
         
-        // Update timestamp
-        DateTime now = rtc.now();
-        char timeBuffer[20];
-        sprintf(timeBuffer, "%04d-%02d-%02d %02d:%02d:%02d", 
-                now.year(), now.month(), now.day(),
-                now.hour(), now.minute(), now.second());
-        sensorData.timestamp = String(timeBuffer);
+        // Update timestamp with WITA time
+        sensorData.timestamp = getWITATimeString();
         
-        // Update pump status
-        sensorData.pumpStatus = pumpActive || (manualPump && !isAutoMode);
+        // Always read actual pump pin state for real-time status
+        sensorData.pumpStatus = digitalRead(pumpPin);
         
         xSemaphoreGive(sensorDataMutex);
         
@@ -523,6 +661,13 @@ void readSensorData() {
         lastValid.energy = isnan(e) ? lastValid.energy : e;
         lastValid.timestamp = millis();
       }
+    } else {
+      // Even if PZEM reading fails, update pump status
+      if (xSemaphoreTake(sensorDataMutex, 10 / portTICK_PERIOD_MS)) {
+        sensorData.pumpStatus = digitalRead(pumpPin);
+        sensorData.timestamp = getWITATimeString();
+        xSemaphoreGive(sensorDataMutex);
+      }
     }
   }
 }
@@ -531,33 +676,27 @@ void readSensorData() {
 void connectToWiFi() {
   lcd1.setCursor(0, 1); lcd1.print("Connecting WiFi...");
   lcd2.setCursor(0, 0); lcd2.print("WiFi Connecting");
+  
   WiFi.begin(ssid, password);
+  
   int attempts = 0;
   while (WiFi.status() != WL_CONNECTED && attempts < 20) {
     delay(500);
     Serial.print(".");
     attempts++;
   }
+
   if (WiFi.status() == WL_CONNECTED) {
     wifiConnected = true;
     Serial.println();
     Serial.print("Connected to WiFi: ");
     Serial.println(WiFi.localIP());
+    
     lcd1.setCursor(0, 1); lcd1.print("WiFi Connected      ");
     lcd2.setCursor(0, 0); lcd2.print("WiFi: OK        ");
-    // Sinkronisasi RTC dengan NTP setelah WiFi terhubung
-    syncRTCWithNTP();
-    // Tampilkan semua data penting di serial dan LCD setelah WiFi connect
-    /*Serial.println("==== DEVICE INFO ====");
-    Serial.print("Device ID: "); Serial.println(deviceId);
-    Serial.print("Location: "); Serial.println(deviceLocation);
-    Serial.print("IP Address: "); Serial.println(WiFi.localIP());
-    Serial.print("Server: "); Serial.print(serverHost); Serial.print(":"); Serial.println(serverPort);
-    Serial.print("PZEM Simulasi: "); Serial.println(simulatePZEM ? "YA" : "TIDAK");
-    Serial.println("=====================");*/
-    lcd1.setCursor(0, 0); lcd1.print("ID:"); lcd1.print(deviceId);
-    lcd1.setCursor(0, 2); lcd1.print("Lokasi:"); lcd1.print(deviceLocation);
-    lcd1.setCursor(0, 3); lcd1.print("IP:"); lcd1.print(WiFi.localIP());
+    
+    // Initialize NTP time synchronization
+    initNTPTime();
   } else {
     wifiConnected = false;
     lcd1.setCursor(0, 1); lcd1.print("WiFi Failed!        ");
@@ -658,9 +797,9 @@ void sendDataViaHTTP() {
     int httpResponseCode = http.POST(jsonString);
     
     if (httpResponseCode > 0) {
-      // Serial.printf("HTTP Response: %d\n", httpResponseCode);
+      Serial.printf("HTTP Response: %d\n", httpResponseCode);
     } else {
-      // Serial.printf("HTTP Error: %d\n", httpResponseCode);
+      Serial.printf("HTTP Error: %d\n", httpResponseCode);
     }
     
     http.end();
@@ -670,42 +809,92 @@ void sendDataViaHTTP() {
 
 // Pump Control Functions - MISSING IMPLEMENTATION
 void activatePump() {
+  activatePump("MANUAL");
+}
+
+void activatePump(const char* activationType) {
   digitalWrite(pumpPin, HIGH);
   pumpStartTime = millis();
   pumpActive = true;
-
-  // Serial.println("Pump activated");
-  sendPumpStatusUpdate(true);
-
-  // Tambahkan notifikasi jika pump berhasil ON
-  logNotification("PUMP", "Pump berhasil ON");
+  
+  // Update sensor data immediately for real-time status
+  if (xSemaphoreTake(sensorDataMutex, 10 / portTICK_PERIOD_MS)) {
+    sensorData.pumpStatus = true;
+    xSemaphoreGive(sensorDataMutex);
+  }
+  
+  // Log pump activation with precise timing and activation type
+  String currentTime = getWITATimeString();
+  logMessage("PUMP", ("Pump activated (" + String(activationType) + ") at " + currentTime).c_str());
+  
+  sendPumpStatusUpdate(true, activationType);
+  
+  // Force immediate display update for real-time response
+  updateDisplays();
 }
 
 void deactivatePump() {
+  deactivatePump("MANUAL");
+}
+
+void deactivatePump(const char* deactivationType) {
   digitalWrite(pumpPin, LOW);
   pumpActive = false;
   
-  // Serial.println("Pump deactivated");
-  sendPumpStatusUpdate(false);
+  // Update sensor data immediately for real-time status
+  if (xSemaphoreTake(sensorDataMutex, 10 / portTICK_PERIOD_MS)) {
+    sensorData.pumpStatus = false;
+    xSemaphoreGive(sensorDataMutex);
+  }
+  
+  // Log pump deactivation with precise timing and deactivation type
+  String currentTime = getWITATimeString();
+  logMessage("PUMP", ("Pump deactivated (" + String(deactivationType) + ") at " + currentTime).c_str());
+  
+  sendPumpStatusUpdate(false, deactivationType);
+  
+  // Force immediate display update for real-time response
+  updateDisplays();
 }
 
 void handlePumpAutomation() {
-  DateTime now = rtc.now();
+  DateTime now = getWITADateTime();
   unsigned long nowMillis = millis();
+  
+  // Store previous pump state to detect changes
+  static bool previousPumpState = false;
 
   if (isAutoMode && !pumpActive && isNightTime(now)) {
     if (nowMillis - lastScheduledPumpTime >= scheduleInterval) {
-      activatePump();
+      activatePump("AUTO");
       lastScheduledPumpTime = nowMillis;
     }
   }
 
   if (pumpActive && nowMillis - pumpStartTime >= pumpDuration) {
-    deactivatePump();
+    deactivatePump("AUTO");
   }
 
   if (!isAutoMode && !pumpActive) {
-    digitalWrite(pumpPin, manualPump ? HIGH : LOW);
+    bool newPumpState = manualPump;
+    digitalWrite(pumpPin, newPumpState ? HIGH : LOW);
+    
+    // Update pump status if it changed
+    if (newPumpState != previousPumpState) {
+      if (xSemaphoreTake(sensorDataMutex, 10 / portTICK_PERIOD_MS)) {
+        sensorData.pumpStatus = newPumpState;
+        xSemaphoreGive(sensorDataMutex);
+      }
+      
+      // Send status update with MANUAL type for physical/mode changes
+      sendPumpStatusUpdate(newPumpState, "MANUAL");
+      
+      // Force display update when pump state changes
+      updateDisplays();
+      
+      logMessage("PUMP", newPumpState ? "Manual pump activated" : "Manual pump deactivated");
+    }
+    previousPumpState = newPumpState;
   }
   
   updateNextPumpTime();
@@ -717,11 +906,11 @@ void checkConnections() {
     if (wifiConnected) {
       wifiConnected = false;
       serverConnected = false;
-      // Serial.println("WiFi disconnected");
+      Serial.println("WiFi disconnected");
     }
     
     if (millis() - lastReconnectAttempt >= reconnectInterval) {
-      // Serial.println("Attempting WiFi reconnection...");
+      Serial.println("Attempting WiFi reconnection...");
       connectToWiFi();
       
       if (wifiConnected) {
@@ -734,12 +923,12 @@ void checkConnections() {
 }
 
 void updateNextPumpTime() {
-  if (!rtcAvailable) {
-    strcpy(nextPumpTimeStr, "RTC ERROR");
+  if (!rtcAvailable && !ntpSynced) {
+    strcpy(nextPumpTimeStr, "TIME ERROR");
     return;
   }
   
-  DateTime now = rtc.now();
+  DateTime now = getWITADateTime();
   
   if (isAutoMode && isNightTime(now)) {
     unsigned long timeLeft = scheduleInterval - (millis() - lastScheduledPumpTime);
@@ -755,17 +944,26 @@ void updateNextPumpTime() {
 }
 
 void sendPumpStatusUpdate(bool status) {
+  sendPumpStatusUpdate(status, "UNKNOWN");
+}
+
+void sendPumpStatusUpdate(bool status, const char* activationType) {
   if (!serverConnected) return;
   
-  DynamicJsonDocument doc(256);
+  DynamicJsonDocument doc(512);
   doc["type"] = "pump_status";
   doc["device_id"] = deviceId;
   doc["status"] = status;
+  doc["activation_type"] = activationType;  // Add activation type to distinguish schedule vs manual
   doc["timestamp"] = sensorData.timestamp;
   
   String message;
   serializeJson(doc, message);
   webSocket.sendTXT(message);
+  
+  // Log the type of activation for debugging
+  logMessage("NOTIFICATION", ("Sent pump status update: " + String(status ? "ON" : "OFF") + 
+                              " (" + String(activationType) + ")").c_str());
 }
 
 // Display update function
@@ -781,23 +979,14 @@ void updateDisplays() {
     DateTime now;
     bool validTime = false;
     
-    // Generate time display with fallback for RTC failure
-    if (rtcAvailable) {
-      now = rtc.now();
-      validTime = true;
-      
-      snprintf(newLine, sizeof(newLine), "%02d/%02d/%02d %02d:%02d:%02d   ",
-               now.day(), now.month(), now.year() % 100,
-               now.hour(), now.minute(), now.second());
-    } else {
-      // Use uptime if RTC isn't available
-      unsigned long uptime = millis() - programStartTime;
-      unsigned long seconds = (uptime / 1000) % 60;
-      unsigned long minutes = (uptime / 60000) % 60;
-      unsigned long hours = (uptime / 3600000) % 24;
-      
-      snprintf(newLine, sizeof(newLine), "Uptime: %02lu:%02lu:%02lu   ",
-               hours, minutes, seconds);
+    // Generate time display with WITA timezone
+    String timeStr = getWITATimeString();
+    snprintf(newLine, sizeof(newLine), "%-20s", timeStr.c_str());
+    
+    // Check if we have valid time
+    validTime = (ntpSynced || rtcAvailable);
+    if (validTime) {
+      now = getWITADateTime();
     }
     
     // Update the time display
@@ -805,13 +994,78 @@ void updateDisplays() {
     lcd1.print(newLine);
     
     if (displayUpdateCounter % 2 == 0) {
-      // Line 1 - Next pump time
+      // Line 1 - Show schedules or "No Schedule"
       lcd1.setCursor(0, 1);
-      if (validTime && isNightTime(now) && isAutoMode) {
-        snprintf(newLine, sizeof(newLine), "Next: %-16s", nextPumpTimeStr);
+      if (scheduleCount > 0) {
+        // Find next schedule to execute today
+        int nextScheduleIndex = -1;
+        int currentHour = validTime ? now.hour() : 0;
+        int currentMinute = validTime ? now.minute() : 0;
+        
+        for (int i = 0; i < scheduleCount; i++) {
+          if (schedules[i].isActive && !schedules[i].hasExecutedToday) {
+            // Check if this schedule is later today
+            if (schedules[i].hour > currentHour || 
+                (schedules[i].hour == currentHour && schedules[i].minute > currentMinute)) {
+              if (nextScheduleIndex == -1 || 
+                  schedules[i].hour < schedules[nextScheduleIndex].hour ||
+                  (schedules[i].hour == schedules[nextScheduleIndex].hour && 
+                   schedules[i].minute < schedules[nextScheduleIndex].minute)) {
+                nextScheduleIndex = i;
+              }
+            }
+          }
+        }
+        
+        if (nextScheduleIndex >= 0) {
+          // Calculate time remaining until next schedule
+          int currentTotalMinutes = currentHour * 60 + currentMinute;
+          int scheduleTotalMinutes = schedules[nextScheduleIndex].hour * 60 + schedules[nextScheduleIndex].minute;
+          int minutesRemaining = scheduleTotalMinutes - currentTotalMinutes;
+          
+          if (minutesRemaining > 0) {
+            if (minutesRemaining < 60) {
+              snprintf(newLine, sizeof(newLine), "Next:%02d:%02d(%dm)", 
+                       schedules[nextScheduleIndex].hour, 
+                       schedules[nextScheduleIndex].minute,
+                       minutesRemaining);
+            } else {
+              snprintf(newLine, sizeof(newLine), "Next: %02d:%02d %s", 
+                       schedules[nextScheduleIndex].hour, 
+                       schedules[nextScheduleIndex].minute,
+                       schedules[nextScheduleIndex].title.substring(0, 8).c_str());
+            }
+          } else {
+            snprintf(newLine, sizeof(newLine), "Next: %02d:%02d NOW!", 
+                     schedules[nextScheduleIndex].hour, 
+                     schedules[nextScheduleIndex].minute);
+          }
+        } else {
+          // All schedules for today are done, show first schedule for tomorrow
+          int earliestIndex = -1;
+          for (int i = 0; i < scheduleCount; i++) {
+            if (schedules[i].isActive) {
+              if (earliestIndex == -1 || 
+                  schedules[i].hour < schedules[earliestIndex].hour ||
+                  (schedules[i].hour == schedules[earliestIndex].hour && 
+                   schedules[i].minute < schedules[earliestIndex].minute)) {
+                earliestIndex = i;
+              }
+            }
+          }
+          if (earliestIndex >= 0) {
+            snprintf(newLine, sizeof(newLine), "Tmrw: %02d:%02d %s", 
+                     schedules[earliestIndex].hour, 
+                     schedules[earliestIndex].minute,
+                     schedules[earliestIndex].title.substring(0, 7).c_str());
+          } else {
+            snprintf(newLine, sizeof(newLine), "No Active Schedule  ");
+          }
+        }
       } else {
-        snprintf(newLine, sizeof(newLine), "SIANG - OFF         ");
+        snprintf(newLine, sizeof(newLine), "No Schedule         ");
       }
+      
       if (strcmp(newLine, prevDisplay[1]) != 0) {
         lcd1.print(newLine);
         strcpy(prevDisplay[1], newLine);
@@ -827,23 +1081,33 @@ void updateDisplays() {
           strcpy(prevDisplay[2], newLine);
         }
       }
-      
-      // Line 3 - Pump status
-      lcd1.setCursor(0, 3);
-      String pumpStatusStr;
-      if (pumpActive) {
-        pumpStatusStr = "AKTIF";
-      } else if (!isAutoMode && manualPump) {
-        pumpStatusStr = "MANUAL ON";
+    }
+    
+    // ALWAYS update pump status for real-time response (remove the condition)
+    lcd1.setCursor(0, 3);
+    String pumpStatusStr;
+    
+    // Read actual pump pin state for real-time status
+    bool actualPumpState = digitalRead(pumpPin);
+    
+    if (actualPumpState) {
+      if (isAutoMode) {
+        pumpStatusStr = "AKTIF (AUTO)";
       } else {
-        pumpStatusStr = "OFF";
+        pumpStatusStr = "AKTIF (MANUAL)";
       }
-      snprintf(newLine, sizeof(newLine), "POMPA: %-12s", pumpStatusStr.c_str());
-      if (strcmp(newLine, prevDisplay[3]) != 0) {
-        lcd1.print(newLine);
-        strcpy(prevDisplay[3], newLine);
+    } else {
+      if (isAutoMode) {
+        pumpStatusStr = "OFF (AUTO)";
+      } else {
+        pumpStatusStr = "OFF (MANUAL)";
       }
     }
+    
+    snprintf(newLine, sizeof(newLine), "POMPA: %-12s", pumpStatusStr.c_str());
+    // Always update pump status regardless of previous state for real-time response
+    lcd1.print(newLine);
+    strcpy(prevDisplay[3], newLine);
     
     // Update second LCD with electrical data
     if (displayUpdateCounter % 4 == 0) {
@@ -944,19 +1208,19 @@ void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
   // Handle WebSocket events with better protection
   switch(type) {
     case WStype_DISCONNECTED:
-      // Serial.println("WebSocket disconnected");
+      Serial.println("WebSocket disconnected");
       serverConnected = false;
       break;
       
     case WStype_CONNECTED:
-      // Serial.println("WebSocket connected");
+      Serial.println("WebSocket connected");
       serverConnected = true;
       
       // Send simplified registration message
       try {
         webSocket.sendTXT("{\"type\":\"device_register\",\"device_id\":\"" + deviceId + "\"}");
       } catch (...) {
-        // Serial.println("Error sending registration message");
+        Serial.println("Error sending registration message");
       }
       break;
       
@@ -994,240 +1258,706 @@ void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
 void handleServerCommand(const char* message) {
   // Introduce artificial delay to slow down command processing
   delay(5);
-
+  
+  // Create a more descriptive log of incoming commands
+  logMessage("COMMAND", "Processing server command");
+  
   // Parse and execute server commands
-  DynamicJsonDocument doc(256);
+  DynamicJsonDocument doc(512);
   DeserializationError error = deserializeJson(doc, message);
-
-  if (!error) {
-    // Check for command ID to prevent duplicates
-    String commandId = doc["command_id"] | "";
-    if (commandId != "" && commandId == lastCommandID) {
-      logMessage("COMMAND", "Duplicate command rejected");
-      return;
-    }
-    lastCommandID = commandId;
-
-    // Process command
-    const char* command = doc["command"];
-    if (!command) {
-      return;
-    }
-
-    if (strcmp(command, "set_mode") == 0) {
-      int mode = doc["mode"];
-      isAutoMode = (mode == 1);
-      manualPump = !isAutoMode;
-      logMessage("COMMAND", isAutoMode ? "Auto mode enabled" : "Manual mode enabled");
-    } else if (strcmp(command, "toggle_pump") == 0) {
-      manualPump = !manualPump;
-      pumpActive = manualPump;
-      digitalWrite(pumpPin, pumpActive ? HIGH : LOW);
-      logMessage("COMMAND", pumpActive ? "Pump activated" : "Pump deactivated");
-    } else if (strcmp(command, "pump_on") == 0) {
-      activatePump();
-      lcd1.setCursor(0, 3);
-      lcd1.print("POMPA: ON         ");
-      logMessage("COMMAND", "Pump ON via server");
-    } else if (strcmp(command, "pump_off") == 0) {
-      deactivatePump();
-      lcd1.setCursor(0, 3);
-      lcd1.print("POMPA: OFF        ");
-      logMessage("COMMAND", "Pump OFF via server");
-    } else {
-      logMessage("COMMAND", "Unknown command");
-    }
+  
+  if (error) {
+    logMessage("JSON", "Parse error in server command");
+    return;
   }
-  doc.clear();
+  
+  // Check for command ID to prevent duplicates
+  String commandId = doc["command_id"] | "";
+  if (commandId != "" && commandId == lastCommandID) {
+    logMessage("COMMAND", "Duplicate command rejected");
+    return;
+  }
+  lastCommandID = commandId;
+  
+  // Process command
+  String command = doc["command"];
+  if (command == "") {
+    // Check if it's a system message without command field
+    String type = doc["type"];
+    if (type == "server_welcome") {
+      logMessage("SERVER", "Welcome message received");
+      return;
+    } else if (type == "ack") {
+      handleServerAck(doc);
+      return;
+    } else if (type == "schedule_sync_complete") {
+      handleScheduleSyncComplete(doc);
+      return;
+    }
+    
+    logMessage("COMMAND", "Invalid command format - missing 'command' field");
+    return;
+  }
+  
+  logMessage("COMMAND", ("Executing: " + command).c_str());
+  
+  // Handle pump control commands
+  if (command == "toggle_pump") {
+    handleTogglePump(commandId);
+  }
+  else if (command == "pump_on") {
+    handlePumpOn(commandId);
+  }
+  else if (command == "pump_off") {
+    handlePumpOff(commandId);
+  }
+  else if (command == "set_mode") {
+    String mode = doc["value"]["value"];
+    handleSetMode(mode, commandId);
+  }
+  
+  // Handle schedule commands
+  else if (command == "add_schedule") {
+    int hour = doc["value"]["hour"];
+    int minute = doc["value"]["minute"];
+    int scheduleId = doc["value"]["schedule_id"];
+    String title = doc["value"]["title"];
+    handleAddSchedule(hour, minute, scheduleId, title, commandId);
+  }
+  else if (command == "remove_schedule") {
+    int scheduleId = doc["value"]["schedule_id"];
+    handleRemoveSchedule(scheduleId, commandId);
+  }
+  else if (command == "get_schedules") {
+    handleGetSchedules(commandId);
+  }
+  
+  // Handle system commands
+  else if (command == "ping") {
+    handlePing(commandId);
+  }
+  else if (command == "restart") {
+    handleRestart(commandId);
+  }
+  
+  else {
+    logMessage("COMMAND", ("Unknown command: " + command).c_str());
+    sendCommandResponse(command, false, commandId, "Unknown command");
+  }
 }
 
-// Add this to setup() function - modified to use Ticker instead of Timer
-void setupWithProtection() {
-  // Record free heap at boot
-  freeHeapAtBoot = ESP.getFreeHeap();
-  lowestFreeHeap = freeHeapAtBoot;
+// ========== COMPLETE COMMAND HANDLERS ==========
+
+// Pump Control Commands
+void handleTogglePump(String commandId) {
+  bool newState = !pumpActive;
   
-  // Track consecutive restarts to detect problems
-  consecutiveRestarts++;
-  
-  // If we're restarting too frequently, delay longer before enabling commands
-  if (consecutiveRestarts > 3) {
-    systemStabilizationTime = 30000; // 30 seconds cooldown
-    logMessage("PROTECTION", "Multiple restarts detected - extended stabilization");
+  if (newState) {
+    activatePump("MANUAL");
+    logMessage("PUMP", "Toggle - Pump activated (MANUAL)");
   } else {
-    systemStabilizationTime = 10000; // 10 seconds normally
+    deactivatePump("MANUAL");
+    logMessage("PUMP", "Toggle - Pump deactivated (MANUAL)");
   }
   
-  // Calculate time when command processing should be enabled
-  unsigned long enableTime = millis() + systemStabilizationTime;
-  logMessage("PROTECTION", "Command processing will be enabled in 10 seconds");
-  
-  // Create a software timer using Ticker instead of Timer
-  static Ticker commandEnableTicker;
-  commandEnableTicker.once(systemStabilizationTime/1000.0, []() {
-    commandProcessingEnabled = true;
-    logMessage("SYSTEM", "Command processing enabled");
-  });
+  sendCommandResponse("toggle_pump", true, commandId, "Pump toggled successfully");
 }
 
-// Modified setup function
+void handlePumpOn(String commandId) {
+  if (!pumpActive) {
+    activatePump("MANUAL");
+    logMessage("PUMP", "Pump turned ON via command (MANUAL)");
+    sendCommandResponse("pump_on", true, commandId, "Pump turned on successfully");
+  } else {
+    logMessage("PUMP", "Pump already ON");
+    sendCommandResponse("pump_on", true, commandId, "Pump was already on");
+  }
+}
+
+void handlePumpOff(String commandId) {
+  if (pumpActive) {
+    deactivatePump("MANUAL");
+    logMessage("PUMP", "Pump turned OFF via command (MANUAL)");
+    sendCommandResponse("pump_off", true, commandId, "Pump turned off successfully");
+  } else {
+    logMessage("PUMP", "Pump already OFF");
+    sendCommandResponse("pump_off", true, commandId, "Pump was already off");
+  }
+}
+
+void handleSetMode(String mode, String commandId) {
+  if (mode == "auto") {
+    isAutoMode = true;
+    manualPump = false;
+    logMessage("MODE", "Set to AUTO mode");
+    sendCommandResponse("set_mode", true, commandId, "Mode set to AUTO");
+    
+    // Force immediate display update to show new mode
+    updateDisplays();
+  } else if (mode == "manual") {
+    isAutoMode = false;
+    logMessage("MODE", "Set to MANUAL mode");
+    sendCommandResponse("set_mode", true, commandId, "Mode set to MANUAL");
+    
+    // Force immediate display update to show new mode
+    updateDisplays();
+  } else {
+    logMessage("MODE", "Invalid mode specified");
+    sendCommandResponse("set_mode", false, commandId, "Invalid mode. Use 'auto' or 'manual'");
+  }
+}
+
+// Schedule Management (Simple implementation) - Variables moved to top of file
+
+void handleAddSchedule(int hour, int minute, int scheduleId, String title, String commandId) {
+  // Log received values for debugging
+  logMessage("SCHEDULE", ("Received schedule data - ID: " + String(scheduleId) + 
+                          ", Hour: " + String(hour) + 
+                          ", Minute: " + String(minute) + 
+                          ", Title: " + title).c_str());
+  
+  // Check if schedule already exists
+  for (int i = 0; i < scheduleCount; i++) {
+    if (schedules[i].scheduleId == scheduleId) {
+      // Update existing schedule
+      schedules[i].hour = hour;
+      schedules[i].minute = minute;
+      schedules[i].title = title;
+      schedules[i].isActive = true;
+      schedules[i].hasExecutedToday = false;
+      
+      logMessage("SCHEDULE", ("Updated schedule " + String(scheduleId) + 
+                              " to " + String(hour) + ":" + String(minute)).c_str());
+      sendScheduleResponse("add_schedule", true, hour, minute, commandId, "Schedule updated successfully");
+      
+      // Force immediate display update
+      updateScheduleDisplay();
+      return;
+    }
+  }
+  
+  // Add new schedule if there's space
+  if (scheduleCount < MAX_SCHEDULES) {
+    schedules[scheduleCount].scheduleId = scheduleId;
+    schedules[scheduleCount].hour = hour;
+    schedules[scheduleCount].minute = minute;
+    schedules[scheduleCount].title = title;
+    schedules[scheduleCount].isActive = true;
+    schedules[scheduleCount].hasExecutedToday = false;
+    scheduleCount++;
+    
+    logMessage("SCHEDULE", ("Added schedule " + String(scheduleId) + 
+                            " at " + String(hour) + ":" + String(minute)).c_str());
+    sendScheduleResponse("add_schedule", true, hour, minute, commandId, "Schedule added successfully");
+    
+    // Force immediate display update
+    updateScheduleDisplay();
+  } else {
+    logMessage("SCHEDULE", "Schedule storage full");
+    sendScheduleResponse("add_schedule", false, hour, minute, commandId, "Schedule storage full");
+  }
+}
+
+void handleRemoveSchedule(int scheduleId, String commandId) {
+  for (int i = 0; i < scheduleCount; i++) {
+    if (schedules[i].scheduleId == scheduleId) {
+      // Shift remaining schedules down
+      for (int j = i; j < scheduleCount - 1; j++) {
+        schedules[j] = schedules[j + 1];
+      }
+      scheduleCount--;
+      
+      logMessage("SCHEDULE", ("Removed schedule " + String(scheduleId)).c_str());
+      sendScheduleResponse("remove_schedule", true, 0, 0, commandId, "Schedule removed successfully");
+      
+      // Force immediate display update
+      updateScheduleDisplay();
+      return;
+    }
+  }
+  
+  logMessage("SCHEDULE", ("Schedule " + String(scheduleId) + " not found").c_str());
+  sendScheduleResponse("remove_schedule", false, 0, 0, commandId, "Schedule not found");
+}
+
+void handleGetSchedules(String commandId) {
+  DynamicJsonDocument doc(1024);
+  doc["type"] = "schedules_response";
+  doc["device_id"] = deviceId;
+  doc["command_id"] = commandId;
+  
+  JsonArray schedulesArray = doc.createNestedArray("schedules");
+  
+  for (int i = 0; i < scheduleCount; i++) {
+    if (schedules[i].isActive) {
+      JsonObject schedule = schedulesArray.createNestedObject();
+      schedule["schedule_id"] = schedules[i].scheduleId;
+      schedule["hour"] = schedules[i].hour;
+      schedule["minute"] = schedules[i].minute;
+      schedule["title"] = schedules[i].title;
+      schedule["hasExecutedToday"] = schedules[i].hasExecutedToday;
+    }
+  }
+  
+  String message;
+  serializeJson(doc, message);
+  webSocket.sendTXT(message);
+  
+  logMessage("SCHEDULE", ("Sent " + String(scheduleCount) + " schedules to server").c_str());
+}
+
+// System Commands
+void handlePing(String commandId) {
+  DynamicJsonDocument doc(256);
+  doc["type"] = "ping_response";
+  doc["device_id"] = deviceId;
+  doc["command_id"] = commandId;
+  doc["timestamp"] = sensorData.timestamp;
+  doc["uptime"] = millis();
+  doc["free_heap"] = ESP.getFreeHeap();
+  doc["wifi_rssi"] = WiFi.RSSI();
+  
+  String message;
+  serializeJson(doc, message);
+  webSocket.sendTXT(message);
+  
+  logMessage("PING", "Ping response sent");
+}
+
+void handleRestart(String commandId) {
+  logMessage("SYSTEM", "Restart command received");
+  
+  // Send acknowledgment before restarting
+  DynamicJsonDocument doc(256);
+  doc["type"] = "restart_response";
+  doc["device_id"] = deviceId;
+  doc["command_id"] = commandId;
+  doc["message"] = "Device will restart in 3 seconds";
+  
+  String message;
+  serializeJson(doc, message);
+  webSocket.sendTXT(message);
+  
+  delay(3000);
+  ESP.restart();
+}
+
+// Server Response Handlers
+void handleServerAck(DynamicJsonDocument& doc) {
+  String receivedType = doc["received_type"];
+  bool success = doc["success"];
+  
+  if (success) {
+    logMessage("ACK", ("Server acknowledged: " + receivedType).c_str());
+  } else {
+    logMessage("ACK", ("Server rejected: " + receivedType).c_str());
+  }
+}
+
+void handleScheduleSyncComplete(DynamicJsonDocument& doc) {
+  int syncedCount = doc["syncedCount"];
+  int totalSchedules = doc["totalSchedules"];
+  bool success = doc["success"];
+  
+  logMessage("SYNC", ("Schedule sync complete: " + String(syncedCount) + "/" + String(totalSchedules)).c_str());
+}
+
+// Helper Functions for Command Responses
+void sendCommandResponse(String command, bool success, String commandId, String message) {
+  DynamicJsonDocument doc(256);
+  doc["type"] = "command_response";
+  doc["device_id"] = deviceId;
+  doc["command"] = command;
+  doc["command_id"] = commandId;
+  doc["success"] = success;
+  doc["message"] = message;
+  doc["timestamp"] = sensorData.timestamp;
+  
+  String jsonString;
+  serializeJson(doc, jsonString);
+  webSocket.sendTXT(jsonString);
+}
+
+void sendScheduleResponse(String action, bool success, int hour, int minute, String commandId, String message) {
+  DynamicJsonDocument doc(256);
+  doc["type"] = "schedule_response";
+  doc["device_id"] = deviceId;
+  doc["action"] = action;
+  doc["success"] = success;
+  doc["hour"] = hour;
+  doc["minute"] = minute;
+  doc["command_id"] = commandId;
+  doc["message"] = message;
+  doc["timestamp"] = sensorData.timestamp;
+  
+  String jsonString;
+  serializeJson(doc, jsonString);
+  webSocket.sendTXT(jsonString);
+}
+
+// Enhanced register device function
+void registerDevice() {
+  if (!serverConnected) return;
+  
+  DynamicJsonDocument doc(384);
+  doc["type"] = "device_register";
+  doc["device_id"] = deviceId;
+  doc["device_type"] = "ESP32-PUMP";
+  doc["location"] = deviceLocation;
+  doc["timestamp"] = sensorData.timestamp;
+  doc["firmware_version"] = "v2.0";
+  doc["capabilities"] = "pump_control,scheduling,sensor_monitoring";
+  
+  String message;
+  serializeJson(doc, message);
+  webSocket.sendTXT(message);
+  
+  logMessage("REGISTER", "Device registration sent");
+}
+
+// Schedule execution checker - call this in main loop
+void checkScheduleExecution() {
+  if ((!rtcAvailable && !ntpSynced) || !isAutoMode) return;
+  
+  DateTime now = getWITADateTime();
+  
+  // Log current time every minute for debugging
+  static int lastLoggedMinute = -1;
+  if (now.minute() != lastLoggedMinute) {
+    lastLoggedMinute = now.minute();
+    logMessage("TIME_CHECK", ("Current WITA time: " + String(now.hour()) + ":" + 
+                             String(now.minute()) + ":" + String(now.second())).c_str());
+  }
+  
+  // Reset execution flags daily
+  if (lastExecutedDay != now.day()) {
+    for (int i = 0; i < scheduleCount; i++) {
+      schedules[i].hasExecutedToday = false;
+    }
+    lastExecutedDay = now.day();
+    logMessage("SCHEDULE", "Daily execution flags reset");
+  }
+  
+  // Check each schedule with precise timing
+  for (int i = 0; i < scheduleCount; i++) {
+    if (schedules[i].isActive && !schedules[i].hasExecutedToday) {
+      // Check if current time matches the schedule time exactly
+      if (now.hour() == schedules[i].hour && now.minute() == schedules[i].minute) {
+        // Additional check: only execute if we're within the first 10 seconds of the minute
+        // to avoid repeated executions during the same minute
+        if (now.second() <= 10) {
+          // Execute schedule
+          logMessage("SCHEDULE", ("Executing schedule " + String(schedules[i].scheduleId) + 
+                                 " '" + schedules[i].title + "'" +
+                                 " at " + String(now.hour()) + ":" + String(now.minute()) + 
+                                 ":" + String(now.second())).c_str());
+          
+          activatePump("SCHEDULE");
+          schedules[i].hasExecutedToday = true;
+          
+          // Send execution notification to server
+          DynamicJsonDocument doc(256);
+          doc["type"] = "schedule_executed";
+          doc["device_id"] = deviceId;
+          doc["schedule_id"] = schedules[i].scheduleId;
+          doc["executed_at"] = sensorData.timestamp;
+          doc["title"] = schedules[i].title;
+          
+          String message;
+          serializeJson(doc, message);
+          webSocket.sendTXT(message);
+          
+          // Update display immediately after execution
+          updateScheduleDisplay();
+          
+          // Log execution with timestamp
+          logMessage("SCHEDULE", ("Schedule executed successfully: " + schedules[i].title + 
+                                 " at " + getWITATimeString()).c_str());
+        } else {
+          // Log when we're in the correct minute but past the execution window
+          logMessage("SCHEDULE", ("Schedule time matched but execution window passed: " + 
+                                 String(schedules[i].scheduleId) + " at second " + String(now.second())).c_str());
+        }
+      }
+    }
+  }
+}
+
+// ========== ARDUINO SETUP AND MAIN LOOP ==========
+
 void setup() {
   Serial.begin(115200);
-  Serial2.begin(9600, SERIAL_8N1, PZEM_RX_PIN, PZEM_TX_PIN);
-  delay(100);
   
-  // Record program start time
+  // Initialize timing
   programStartTime = millis();
   
-  // Initialize I2C with proper pins before initializing RTC
-  Wire.begin(21, 22);
-  delay(100);  // Give the I2C bus time to stabilize
-  
-  // Try to initialize RTC with proper error handling
-  rtcAvailable = rtc.begin();
-  
-  if (!rtcAvailable) {
-    // Serial.println("RTC not found or not working");
-    lcd1.setCursor(0, 1); lcd1.print("RTC ERROR!");
-    lcd2.setCursor(0, 1); lcd2.print("RTC ERROR!");
-    delay(2000); // Show error but continue
-  } else {
-    // Check if the RTC lost power and reset time if needed
-    if (rtc.lostPower()) {
-      // Serial.println("RTC lost power, setting time to compile time");
-      lcd1.setCursor(0, 1); lcd1.print("RTC Reset");
-      // Set the RTC to the date & time this sketch was compiled
-      rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
-      delay(1000);
-    }
-  }
-  
-  lcd1.begin(20, 4);
-  lcd1.backlight(); lcd1.clear();
-  lcd1.setCursor(0, 0); lcd1.print("Inisialisasi...");
-  lcd2.begin(16, 2); // Tidak perlu if (!lcd2.begin(...))
-  lcd2.backlight(); lcd2.clear();
-  lcd2.setCursor(0, 0); lcd2.print("Starting...");
+  // Initialize pins
   pinMode(pumpPin, OUTPUT);
-  pinMode(pirPin, INPUT_PULLUP);
+  pinMode(pirPin, INPUT);
   digitalWrite(pumpPin, LOW);
-  pirNotifySemaphore = xSemaphoreCreateBinary();
+  
+  // Initialize PIR interrupt
   attachInterrupt(digitalPinToInterrupt(pirPin), handlePirInterrupt, CHANGE);
+  
+  // Initialize semaphores
   sensorDataMutex = xSemaphoreCreateMutex();
-  lastValid = {0, 0, 0, 0, 0};
-  if (simulatePZEM) {
-    lcd1.setCursor(0, 1);
-    lcd1.print("PZEM: SIMULATED");
-    // Serial.println("PZEM simulation mode active");
+  pirNotifySemaphore = xSemaphoreCreateBinary();
+  
+  // Initialize I2C and LCD
+  Wire.begin();
+  lcd1.init();
+  lcd1.backlight();
+  lcd1.setCursor(0, 0);
+  lcd1.print("ESP32 Starting...");
+  
+  lcd2.init();
+  lcd2.backlight();
+  lcd2.setCursor(0, 0);
+  lcd2.print("System Init");
+  
+  delay(1000);
+  
+  // Initialize RTC
+  if (rtc.begin()) {
+    rtcAvailable = true;
+    logMessage("RTC", "DS3231 initialized successfully");
+    
+    // Check if RTC lost power and needs time setting
+    if (rtc.lostPower()) {
+      logMessage("RTC", "RTC lost power, setting time");
+      rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+    }
   } else {
-    improvedPzemInitialization();
+    rtcAvailable = false;
+    logMessage("RTC", "Failed to initialize DS3231, using uptime");
   }
+  
+  // Initialize PZEM
+  Serial2.begin(9600, SERIAL_8N1, PZEM_RX_PIN, PZEM_TX_PIN);
+  delay(500);
+  improvedPzemInitialization();
+  
+  // Connect to WiFi
   connectToWiFi();
+  
+  // Initialize WebSocket if WiFi connected
   if (wifiConnected) {
     initWebSocket();
   }
+  
+  // Initialize sensor data structure
+  sensorData.voltage = 0;
+  sensorData.current = 0;
+  sensorData.power = 0;
+  sensorData.energy = 0;
+  sensorData.pirStatus = false;
+  sensorData.pumpStatus = false;
+  sensorData.timestamp = "Unknown";
+  
+  // Initialize schedules
+  scheduleCount = 0;
+  lastExecutedDay = -1;
+  
+  // Track free heap
+  freeHeapAtBoot = ESP.getFreeHeap();
+  lowestFreeHeap = freeHeapAtBoot;
+  
+  logMessage("SYSTEM", "ESP32 initialization complete");
+  logMessage("TIMEZONE", "Configured for WITA (UTC+8) timezone");
+  
+  if (ntpSynced) {
+    String currentTime = getWITATimeString();
+    logMessage("TIME", ("Current WITA time: " + currentTime).c_str());
+  }
+  
   lcd1.clear();
+  lcd1.setCursor(0, 0);
+  lcd1.print("System Ready - WITA");
+  
   lcd2.clear();
-  // Serial.println("Setup completed");
+  lcd2.setCursor(0, 0);
+  lcd2.print("IoT Monitor");
+}
+
+// Function to immediately update schedule display on LCD
+void updateScheduleDisplay() {
+  if (!xSemaphoreTake(sensorDataMutex, 100 / portTICK_PERIOD_MS)) return;
+  
+  char newLine[21];
+  DateTime now;
+  bool validTime = false;
+  
+  // Get current WITA time
+  if (ntpSynced || rtcAvailable) {
+    now = getWITADateTime();
+    validTime = true;
+  }
+  
+  // Debug: Log current schedule count and details
+  logMessage("DISPLAY", ("Schedule count: " + String(scheduleCount)).c_str());
+  for (int i = 0; i < scheduleCount; i++) {
+    logMessage("DISPLAY", ("Schedule " + String(i) + ": ID=" + String(schedules[i].scheduleId) + 
+                          ", Time=" + String(schedules[i].hour) + ":" + String(schedules[i].minute) + 
+                          ", Active=" + String(schedules[i].isActive) + 
+                          ", Title=" + schedules[i].title).c_str());
+  }
+  
+  // Update schedule line (Line 1)
+  lcd1.setCursor(0, 1);
+  
+  if (scheduleCount > 0) {
+    // Find next schedule to execute today
+    int nextScheduleIndex = -1;
+    int currentHour = validTime ? now.hour() : 0;
+    int currentMinute = validTime ? now.minute() : 0;
+    
+    logMessage("DISPLAY", ("Current time: " + String(currentHour) + ":" + String(currentMinute)).c_str());
+    
+    for (int i = 0; i < scheduleCount; i++) {
+      if (schedules[i].isActive && !schedules[i].hasExecutedToday) {
+        // Check if this schedule is later today
+        if (schedules[i].hour > currentHour || 
+            (schedules[i].hour == currentHour && schedules[i].minute > currentMinute)) {
+          if (nextScheduleIndex == -1 || 
+              schedules[i].hour < schedules[nextScheduleIndex].hour ||
+              (schedules[i].hour == schedules[nextScheduleIndex].hour && 
+               schedules[i].minute < schedules[nextScheduleIndex].minute)) {
+            nextScheduleIndex = i;
+          }
+        }
+      }
+    }
+    
+    if (nextScheduleIndex >= 0) {
+      // Calculate time remaining until next schedule
+      int currentTotalMinutes = currentHour * 60 + currentMinute;
+      int scheduleTotalMinutes = schedules[nextScheduleIndex].hour * 60 + schedules[nextScheduleIndex].minute;
+      int minutesRemaining = scheduleTotalMinutes - currentTotalMinutes;
+      
+      if (minutesRemaining > 0) {
+        if (minutesRemaining < 60) {
+          snprintf(newLine, sizeof(newLine), "Next:%02d:%02d(%dm)", 
+                   schedules[nextScheduleIndex].hour, 
+                   schedules[nextScheduleIndex].minute,
+                   minutesRemaining);
+        } else {
+          snprintf(newLine, sizeof(newLine), "Next: %02d:%02d %s", 
+                   schedules[nextScheduleIndex].hour, 
+                   schedules[nextScheduleIndex].minute,
+                   schedules[nextScheduleIndex].title.substring(0, 8).c_str());
+        }
+      } else {
+        snprintf(newLine, sizeof(newLine), "Next: %02d:%02d NOW!", 
+                 schedules[nextScheduleIndex].hour, 
+                 schedules[nextScheduleIndex].minute);
+      }
+      
+      logMessage("DISPLAY", ("Found next schedule: " + String(schedules[nextScheduleIndex].hour) + 
+                            ":" + String(schedules[nextScheduleIndex].minute) + 
+                            ", Minutes remaining: " + String(minutesRemaining)).c_str());
+    } else {
+      // All schedules for today are done, show first schedule for tomorrow
+      int earliestIndex = -1;
+      for (int i = 0; i < scheduleCount; i++) {
+        if (schedules[i].isActive) {
+          if (earliestIndex == -1 || 
+              schedules[i].hour < schedules[earliestIndex].hour ||
+              (schedules[i].hour == schedules[earliestIndex].hour && 
+               schedules[i].minute < schedules[earliestIndex].minute)) {
+            earliestIndex = i;
+          }
+        }
+      }
+      if (earliestIndex >= 0) {
+        snprintf(newLine, sizeof(newLine), "Tmrw: %02d:%02d %s", 
+                 schedules[earliestIndex].hour, 
+                 schedules[earliestIndex].minute,
+                 schedules[earliestIndex].title.substring(0, 7).c_str());
+      } else {
+        snprintf(newLine, sizeof(newLine), "No Active Schedule  ");
+      }
+    }
+  } else {
+    snprintf(newLine, sizeof(newLine), "No Schedule         ");
+  }
+  
+  lcd1.print(newLine);
+  
+  // Log the schedule update
+  logMessage("DISPLAY", ("Schedule updated: " + String(newLine)).c_str());
+  
+  xSemaphoreGive(sensorDataMutex);
 }
 
 void loop() {
-  // Check PIR sensor with absolute highest priority
-  checkPirSensor(); 
+  unsigned long currentTime = millis();
   
-  // Continue with rest of loop functioning
-  unsigned long currentMillis = millis();
-  
-  // Handle WebSocket LESS frequently - increased to 100ms from 20ms
-  if (wifiConnected && currentMillis - lastWsLoopTime >= 100) {
+  // WebSocket loop - handle every 50ms
+  if (currentTime - lastWsLoopTime > 50) {
     webSocket.loop();
-    lastWsLoopTime = currentMillis;
+    lastWsLoopTime = currentTime;
   }
   
-  // Process one command from the queue if it's time
+  // Process command queue
   processCommandQueue();
   
-  // Process other functions as before
-  if (currentMillis - lastMeasurementTime >= 200) {
+  // Read sensor data every 1 second
+  if (currentTime - lastMeasurementTime > 1000) {
     readSensorData();
-    lastMeasurementTime = currentMillis;
+    lastMeasurementTime = currentTime;
   }
   
-  // Run pump automation less frequently
-  if (currentMillis - lastPumpTime >= 1000) { // Slower 1 second rate
-    handlePumpAutomation();
-    lastPumpTime = currentMillis;
+  // Check PIR sensor
+  checkPirSensor();
+  
+  // Send data to server every 5 seconds
+  if (currentTime - lastDataSent > dataSendInterval) {
+    sendDataToServer();
+    lastDataSent = currentTime;
   }
   
-  // Run data transmission less frequently
-  if (currentMillis - lastDataSent >= dataSendInterval) {
-    if (wifiConnected) {
-      // Add rate limiting - only send if heap is healthy
-      if (ESP.getFreeHeap() > freeHeapAtBoot * 0.7) {
-        sendDataToServer();
-      } else {
-        logMessage("MEMORY", "Low heap, skipping data transmission");
-      }
-    }
-    lastDataSent = currentMillis;
+  // Update displays more frequently for real-time pump status - every 500ms
+  if (currentTime - lastDisplayTime > 500) {
+    updateDisplays();
+    lastDisplayTime = currentTime;
   }
   
-  if (currentMillis - lastDisplayTime >= 500) {
-    // Only update non-PIR displays if no recent motion
-    if (!motionDetected) {
-      updateDisplays();
-    }
-    // Selalu update electrical monitoring di LCD2
-    updateElectricalMonitoringDisplay();
-    lastDisplayTime = currentMillis;
-  }
-  
-  if (currentMillis - lastConnectionCheckTime >= 5000) {
+  // Check connections every 10 seconds
+  if (currentTime - lastConnectionCheckTime > 10000) {
     checkConnections();
-    lastConnectionCheckTime = currentMillis;
-  }
-
-  // Print memory stats every 30 seconds
-  static unsigned long lastMemReport = 0;
-  if (currentMillis - lastMemReport >= 30000) {
-    uint32_t currentHeap = ESP.getFreeHeap();
-    // Serial.printf("Memory - Current: %u bytes, Lowest: %u bytes (%.1f%% of boot)\n", 
-    //              currentHeap, lowestFreeHeap, (lowestFreeHeap * 100.0) / freeHeapAtBoot);
-    lastMemReport = currentMillis;
+    lastConnectionCheckTime = currentTime;
   }
   
-  // Use a longer delay to reduce CPU usage
-  delay(10); // 10ms delay instead of micros delay
-}
-
-// Sinkronisasi RTC dengan NTP agar jam selalu akurat
-void syncRTCWithNTP() {
-  timeClient.begin();
-  if (timeClient.forceUpdate()) {
-    unsigned long epochTime = timeClient.getEpochTime();
-    if (epochTime > 1600000000) { // Valid epoch
-      DateTime ntpTime = DateTime(epochTime);
-      rtc.adjust(ntpTime);
-      // Serial.print("RTC updated from NTP: ");
-      // Serial.println(timeClient.getFormattedTime());
-    }
-  } else {
-    // Serial.println("NTP sync failed");
+  // Handle pump automation
+  handlePumpAutomation();
+  
+  // Check schedule execution every 5 seconds for precise timing
+  static unsigned long lastScheduleCheck = 0;
+  if (currentTime - lastScheduleCheck > 5000) {
+    checkScheduleExecution();
+    lastScheduleCheck = currentTime;
   }
-  timeClient.end();
+  
+  // Sync time with NTP periodically
+  syncTimeWithNTP();
+  
+  // Memory monitoring every 30 seconds
+  static unsigned long lastMemoryCheck = 0;
+  if (currentTime - lastMemoryCheck > 30000) {
+    uint32_t currentHeap = ESP.getFreeHeap();
+    if (currentHeap < lowestFreeHeap) {
+      lowestFreeHeap = currentHeap;
+    }
+    
+    // Log if memory is getting low
+    if (currentHeap < (freeHeapAtBoot * 0.5)) {
+      logMessage("MEMORY", ("Low memory warning: " + String(currentHeap) + " bytes free").c_str());
+    }
+    
+    lastMemoryCheck = currentTime;
+  }
+  
+  // Prevent watchdog reset
+  yield();
+  delay(10);
 }
-
-// Tambahkan log khusus untuk notifikasi
-void logNotification(const char* notifType, const char* notifMsg) {
-  updateLogTimestamp();
-  Serial.print("[NOTIF] ");
-  Serial.print(logTimeBuffer);
-  Serial.print(" | ");
-  Serial.print(notifType);
-  Serial.print(": ");
-  Serial.println(notifMsg);
-}
-
-// Contoh penggunaan logNotification:
-// logNotification("DEVICE ONLINE", "Device berhasil terhubung ke server");
-// logNotification("INSECT/MOTION", "Deteksi gerakan/insect terdeteksi oleh PIR");

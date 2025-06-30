@@ -112,6 +112,9 @@ class ScheduleService {
     // Update schedule
     static async updateSchedule(scheduleId, updateData) {
         try {
+            console.log('ScheduleService.updateSchedule called with:', { scheduleId, updateData });
+            console.log('API URL:', `${API_BASE_URL}/api/schedules/${scheduleId}`);
+            
             const response = await fetch(`${API_BASE_URL}/api/schedules/${scheduleId}`, {
                 method: 'PUT',
                 headers: {
@@ -120,12 +123,16 @@ class ScheduleService {
                 body: JSON.stringify(updateData),
             });
 
+            console.log('ScheduleService.updateSchedule response status:', response.status);
+
             if (!response.ok) {
                 const errorData = await response.json().catch(() => ({}));
+                console.error('ScheduleService.updateSchedule error response:', errorData);
                 throw new Error(errorData.message || `HTTP error! status: ${response.status}`);
             }
 
             const result = await response.json();
+            console.log('ScheduleService.updateSchedule result:', result);
 
             if (result.status === 'success') {
                 return result.data;

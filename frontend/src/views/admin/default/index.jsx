@@ -150,10 +150,13 @@ const Dashboard = () => {
 
   const updateJadwal = useCallback(async (scheduleId, updateData) => {
     try {
+      console.log('Dashboard - updateJadwal called with:', { scheduleId, updateData });
       const result = await hookUpdateSchedule(scheduleId, updateData);
+      console.log('Dashboard - updateJadwal result:', result);
       logOnce('SCHEDULE_UPDATED', 'Jadwal berhasil diperbarui:', result);
       return result;
     } catch (error) {
+      console.error('Dashboard - updateJadwal error:', error);
       errorOnce('UPDATE_SCHEDULE_ERROR', 'Gagal memperbarui jadwal:', error.message);
       throw error;
     }
@@ -183,8 +186,11 @@ const Dashboard = () => {
 
   const fetchSchedules = useCallback(async () => {
     try {
+      console.log('Dashboard - fetchSchedules called');
       await hookFetchSchedules();
+      console.log('Dashboard - fetchSchedules completed');
     } catch (error) {
+      console.error('Dashboard - fetchSchedules error:', error);
       errorOnce('FETCH_SCHEDULES_ERROR', 'Failed to fetch schedules:', error.message);
     }
   }, [hookFetchSchedules]);

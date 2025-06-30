@@ -11,7 +11,21 @@ const useNotifications = () => {
         setLoading(true);
         try {
             const res = await axios.get("/api/notifications", { baseURL });
-            setNotifications(res.data.data || []);
+            
+            // Debug log to check response structure
+            console.log("Notifications API response:", res.data);
+            
+            // Process the notifications data to ensure consistent structure
+            const processedNotifications = (res.data.data || []).map(notif => {
+                // Ensure both id and notif_id are available for compatibility
+                return {
+                    ...notif,
+                    id: notif.id || notif.notif_id,
+                    notif_id: notif.notif_id || notif.id
+                };
+            });
+            
+            setNotifications(processedNotifications);
         } catch (e) {
             console.error('Error fetching notifications:', e);
             setNotifications([]);

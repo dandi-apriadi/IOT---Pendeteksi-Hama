@@ -1,0 +1,21 @@
+### Test Schedule Update
+PUT http://localhost:3000/api/schedules/1
+Content-Type: application/json
+
+{
+  "title": "Test Update Jadwal",
+  "device_id": 1,
+  "schedule_type": "daily",
+  "start_time": "08:30",
+  "end_time": "09:00",
+  "action_type": "turn_on",
+  "is_active": true
+}
+
+### Get all schedules to verify
+GET http://localhost:3000/api/schedules
+Content-Type: application/json
+
+### Get specific schedule
+GET http://localhost:3000/api/schedules/1
+Content-Type: application/json

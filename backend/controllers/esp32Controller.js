@@ -892,80 +892,80 @@ export const getSensorHistoryByDevice = async (req, res) => {
 /**
  * Send command to ESP32 via WebSocket with improved reliability
  */
-export const sendCommandToESP32 = async (req, res) => {
-    const startTime = Date.now();
+// export const sendCommandToESP32 = async (req, res) => {
+//     const startTime = Date.now();
 
-    try {
-        const { deviceId } = req.params;
-        const { command, value } = req.body;
+//     try {
+//         const { deviceId } = req.params;
+//         const { command, value } = req.body;
 
-        if (!deviceId || !command) {
-            return res.status(400).json({
-                status: 'error',
-                message: 'deviceId and command are required'
-            });
-        }
+//         if (!deviceId || !command) {
+//             return res.status(400).json({
+//                 status: 'error',
+//                 message: 'deviceId and command are required'
+//             });
+//         }
 
-        // Get WebSocket connections from global variable
-        const espConnections = global.espConnections;
+//         // Get WebSocket connections from global variable
+//         const espConnections = global.espConnections;
 
-        // Tambahkan log untuk debugging
-        console.log('[DEBUG] DeviceId from request:', deviceId);
-        console.log('[DEBUG] Online devices:', espConnections ? Array.from(espConnections.keys()) : []);
+//         // Tambahkan log untuk debugging
+//         console.log('[DEBUG] DeviceId from request:', deviceId);
+//         console.log('[DEBUG] Online devices:', espConnections ? Array.from(espConnections.keys()) : []);
 
-        if (!espConnections || !espConnections.has(deviceId)) {
-            return res.status(404).json({
-                status: 'error',
-                message: 'Device not found or offline'
-            });
-        }
+//         if (!espConnections || !espConnections.has(deviceId)) {
+//             return res.status(404).json({
+//                 status: 'error',
+//                 message: 'Device not found or offline'
+//             });
+//         }
 
-        const deviceConn = espConnections.get(deviceId);
-        const commandId = Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
-        const commandMessage = {
-            command_id: commandId, // Add unique ID to track command
-            command: command,
-            value: value,
-            timestamp: new Date().toISOString()
-        };
+//         const deviceConn = espConnections.get(deviceId);
+//         const commandId = Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
+//         const commandMessage = {
+//             command_id: commandId, // Add unique ID to track command
+//             command: command,
+//             value: value,
+//             timestamp: new Date().toISOString()
+//         };
 
-        // Update connection stats for command tracking
-        deviceConn.connectionStats.messagesSent++;
+//         // Update connection stats for command tracking
+//         deviceConn.connectionStats.messagesSent++;
 
-        // Send with promise for better error handling
-        try {
-            deviceConn.ws.send(JSON.stringify(commandMessage));
+//         // Send with promise for better error handling
+//         try {
+//             deviceConn.ws.send(JSON.stringify(commandMessage));
 
-            return res.json({
-                status: 'success',
-                message: 'Command sent',
-                command_id: commandId,
-                data: {
-                    device_id: deviceId,
-                    command: command,
-                    value: value,
-                    timestamp: new Date(),
-                    processing_time_ms: Date.now() - startTime
-                }
-            });
-        } catch (wsError) {
-            // WebSocket error handling
-            return res.status(502).json({
-                status: 'error',
-                message: 'WebSocket send failed',
-                error: wsError.message,
-                processing_time_ms: Date.now() - startTime
-            });
-        }
-    } catch (error) {
-        // Silent error handling
-        return res.status(500).json({
-            status: 'error',
-            message: 'Failed to send command',
-            processing_time_ms: Date.now() - startTime
-        });
-    }
-};
+//             return res.json({
+//                 status: 'success',
+//                 message: 'Command sent',
+//                 command_id: commandId,
+//                 data: {
+//                     device_id: deviceId,
+//                     command: command,
+//                     value: value,
+//                     timestamp: new Date(),
+//                     processing_time_ms: Date.now() - startTime
+//                 }
+//             });
+//         } catch (wsError) {
+//             // WebSocket error handling
+//             return res.status(502).json({
+//                 status: 'error',
+//                 message: 'WebSocket send failed',
+//                 error: wsError.message,
+//                 processing_time_ms: Date.now() - startTime
+//             });
+//         }
+//     } catch (error) {
+//         // Silent error handling
+//         return res.status(500).json({
+//             status: 'error',
+//             message: 'Failed to send command',
+//             processing_time_ms: Date.now() - startTime
+//         });
+//     }
+// };
 
 /**
  * Get recent sensor data for dashboard

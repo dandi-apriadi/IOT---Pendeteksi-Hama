@@ -12,7 +12,9 @@ export const useScheduleManagement = () => {
             setLoading(true);
             setError(null);
 
+            console.log('useScheduleManagement - fetchSchedules called with filters:', filters);
             const data = await ScheduleService.getSchedules(filters);
+            console.log('useScheduleManagement - fetchSchedules received data:', data?.length, 'schedules');
             setSchedules(data);
 
             return data;
@@ -60,12 +62,13 @@ export const useScheduleManagement = () => {
             setLoading(true);
             setError(null);
 
+            console.log('useScheduleManagement - updateSchedule called with:', { scheduleId, updateData });
             const updatedSchedule = await ScheduleService.updateSchedule(scheduleId, updateData);
+            console.log('useScheduleManagement - updateSchedule result:', updatedSchedule);
 
-            // Update local state
-            setSchedules(prev => prev.map(schedule =>
-                schedule.schedule_id === scheduleId ? updatedSchedule : schedule
-            ));
+            // Instead of updating local state immediately, let the refresh handle it
+            // This prevents race conditions between local updates and fresh fetches
+            console.log('useScheduleManagement - Schedule updated successfully, relying on refresh for state update');
 
             return updatedSchedule;
         } catch (err) {

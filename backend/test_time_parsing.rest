@@ -1,0 +1,73 @@
+# Test Time Parsing in Backend
+
+### Test 1: Create Schedule with TIME format
+POST http://localhost:3000/api/schedules
+Content-Type: application/json
+
+{
+  "device_id": 1,
+  "title": "Morning Test",
+  "schedule_type": "daily",
+  "start_time": "08:30",
+  "end_time": "09:00",
+  "action_type": "turn_on",
+  "is_active": true
+}
+
+### Test 2: Update existing schedule time
+PUT http://localhost:3000/api/schedules/1
+Content-Type: application/json
+
+{
+  "title": "Updated Morning Schedule", 
+  "start_time": "14:45",
+  "is_active": true
+}
+
+### Test 3: Get schedule to verify stored format
+GET http://localhost:3000/api/schedules/1
+Content-Type: application/json
+
+### Test 4: Create evening schedule
+POST http://localhost:3000/api/schedules
+Content-Type: application/json
+
+{
+  "device_id": 1,
+  "title": "Evening Pump",
+  "schedule_type": "daily", 
+  "start_time": "18:15",
+  "end_time": "18:45",
+  "action_type": "turn_on",
+  "is_active": true
+}
+
+### Test 5: Get all schedules to verify multiple times
+GET http://localhost:3000/api/schedules?device_id=1
+Content-Type: application/json
+
+### Test 6: Test with different time formats
+POST http://localhost:3000/api/schedules
+Content-Type: application/json
+
+{
+  "device_id": 1,
+  "title": "Late Night",
+  "schedule_type": "daily",
+  "start_time": "23:59", 
+  "action_type": "turn_off",
+  "is_active": true
+}
+
+### Test 7: Early morning schedule
+POST http://localhost:3000/api/schedules
+Content-Type: application/json
+
+{
+  "device_id": 1,
+  "title": "Early Bird",
+  "schedule_type": "daily",
+  "start_time": "05:00",
+  "action_type": "turn_on", 
+  "is_active": true
+}

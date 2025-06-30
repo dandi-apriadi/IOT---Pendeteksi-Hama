@@ -12,11 +12,17 @@
     "install:all": "npm install && cd backend && npm install && cd ../frontend && npm install",
     "build": "cd frontend && npm run build"
   },
-  "keywords": ["esp32", "iot", "dashboard", "real-time"],
+  "keywords": [
+    "esp32",
+    "iot",
+    "dashboard",
+    "real-time"
+  ],
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "concurrently": "^8.2.0"
+    "concurrently": "^8.2.0",
+    "ws": "^8.18.3"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"

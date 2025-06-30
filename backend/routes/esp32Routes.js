@@ -2,6 +2,8 @@ import express from 'express';
 import * as esp32Controller from "../controllers/esp32Controller.js";
 import * as sensorDataController from "../controllers/sensorDataController.js";
 import { getAllSensorData } from '../controllers/sensorDataController.js';
+import { getDueSchedules } from '../controllers/scheduleController.js';
+import SensorData from '../models/sensorModel.js'; // Add import for device status check
 
 const router = express.Router();
 
@@ -9,6 +11,107 @@ const router = express.Router();
  * ESP32 API Routes
  * IoT System for Sensor Data Management
  */
+
+/**
+ * @route GET /api/esp32/device-status
+ * @description Check if an ESP32 device is online
+ * @access Public
+ */
+router.get('/device-status', async (req, res) => {
+    try {
+        const deviceId = req.query.device_id;
+        
+        if (!deviceId) {
+            return res.status(400).json({ 
+                status: 'error',
+                message: 'Device ID is required',
+                online: false
+            });
+        }
+
+        // Check if the device is connected via WebSocket
+        const isConnected = global.espConnections ? global.espConnections.has(deviceId) : false;
+        
+        return res.status(200).json({
+            status: 'success',
+            online: isConnected,
+            device_id: deviceId,
+            message: isConnected ? 'Device is online' : 'Device is offline'
+        });
+    } catch (error) {
+        console.error('Error checking device status:', error);
+        return res.status(500).json({
+            status: 'error',
+            message: 'Failed to check device status',
+            online: false
+        });
+    }
+});
+
+/**
+ * @route GET /api/esp32/device-status/:deviceId
+ * @description Check if an ESP32 device is online using URL parameter
+ * @access Public
+ */
+router.get('/device-status/:deviceId', async (req, res) => {
+    try {
+        const { deviceId } = req.params;
+        
+        if (!deviceId) {
+            return res.status(400).json({ 
+                status: 'error',
+                message: 'Device ID is required',
+                online: false
+            });
+        }
+
+        // Check if the device is connected via WebSocket
+        const isConnected = global.espConnections ? global.espConnections.has(deviceId) : false;
+        
+        // Get last seen data (if available) to provide additional context
+        let lastSeen = null;
+        let lastDataTimestamp = null;
+        
+        try {
+            // Try to get the latest data record for the device
+            const latestData = await SensorData.findOne({ 
+                device_id: deviceId 
+            }).sort({ timestamp: -1 }).lean();
+            
+            if (latestData && latestData.timestamp) {
+                lastDataTimestamp = latestData.timestamp;
+                const timeDiff = Date.now() - new Date(latestData.timestamp).getTime();
+                const minutesAgo = Math.floor(timeDiff / (1000 * 60));
+                
+                if (minutesAgo < 5) {
+                    // If data was received within the last 5 minutes, device might just have a temporary WebSocket disconnection
+                    lastSeen = `${minutesAgo} minute${minutesAgo !== 1 ? 's' : ''} ago`;
+                } else {
+                    lastSeen = lastDataTimestamp;
+                }
+            }
+        } catch (dataError) {
+            console.warn(`Could not retrieve last seen data for ${deviceId}:`, dataError.message);
+            // Non-critical error, continue
+        }
+        
+        return res.status(200).json({
+            status: 'success',
+            online: isConnected,
+            device_id: deviceId,
+            message: isConnected ? 'Device is online' : 'Device is offline',
+            last_seen: lastSeen,
+            last_data: lastDataTimestamp
+        });
+    } catch (error) {
+        console.error('Error checking device status:', error);
+        return res.status(500).json({
+            status: 'error',
+            message: 'Failed to check device status',
+            online: false
+        });
+    }
+});
 
 // Sensor data routes - HTTP API
 router.post('/data', esp32Controller.recordSensorData);
@@ -36,9 +139,6 @@ if (typeof esp32Controller.getRecentSensorDataForDashboard === 'function') {
 
 // Device management routes
 router.get('/devices', esp32Controller.getDeviceStatus);
-
-// Command routes
-router.post('/command/:deviceId', esp32Controller.sendCommandToESP32);
 
 // Add a diagnostic endpoint for testing connectivity
 router.get('/diagnostics', (req, res) => {
@@ -158,5 +258,8 @@ router.get('/dashboard-summary/:deviceId', async (req, res) => {
 
 // Route untuk mengambil semua data sensor (data mentah)
 router.get('/data/all', getAllSensorData);
+
+// Route untuk mengambil jadwal yang sudah jatuh tempo
+router.get('/schedules/trigger-due', getDueSchedules);
 
 export default router;

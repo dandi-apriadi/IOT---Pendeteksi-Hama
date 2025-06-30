@@ -13,8 +13,6 @@ const JadwalSection = ({
     onUpdateSchedule,
     onDeleteSchedule,
     onToggleScheduleStatus,
-    onRefreshSchedules,
-    onRefreshDevices,
     showAddModal = false,
     setShowAddModal
 }) => {    // Form state for adding new schedule
@@ -35,12 +33,17 @@ const JadwalSection = ({
     const [formLoading, setFormLoading] = useState(false);
     const [formError, setFormError] = useState(null);
 
-    // Debug logging for devices
+    // Debug logging for devices (removed to prevent excessive logging)
+    /*
     useEffect(() => {
         console.log('JadwalSection - Devices received:', devices);
         console.log('JadwalSection - Devices length:', devices?.length);
         console.log('JadwalSection - Devices type:', typeof devices);
-    }, [devices]);    // Debug logging for schedules
+    }, [devices]);    
+    */
+    
+    // Debug logging for schedules (removed to prevent excessive logging)
+    /*
     useEffect(() => {
         console.log('JadwalSection - Schedules received:', schedules);
         console.log('JadwalSection - Schedules length:', schedules?.length);
@@ -74,7 +77,10 @@ const JadwalSection = ({
             console.log('3. API endpoint error');
             console.log('4. fetchSchedules not being called');
         }
-    }, [schedules, scheduleLoading, scheduleError]);// Handle form input changes
+    }, [schedules, scheduleLoading, scheduleError]);
+    */
+
+    // Handle form input changes
     const handleInputChange = (e) => {
         const { name, value, type, checked } = e.target;
 
@@ -131,7 +137,7 @@ const JadwalSection = ({
             console.log('Schedule data being sent:', {
                 ...newSchedule,
                 device_id: selectedDeviceId
-            }); await onAddSchedule(newSchedule);
+            });            await onAddSchedule(newSchedule);
 
             // Reset form
             setNewSchedule({
@@ -147,11 +153,8 @@ const JadwalSection = ({
             // Close modal
             setShowAddModal(false);
 
-            // Refresh schedules data after add
-            if (onRefreshSchedules && typeof onRefreshSchedules === 'function') {
-                console.log('Refreshing schedules after add...');
-                await onRefreshSchedules();
-            }
+            console.log('Schedule added successfully');
+            // No need to refresh - parent handles optimistic updates
 
         } catch (error) {
             setFormError(error.message);
@@ -179,7 +182,7 @@ const JadwalSection = ({
     const handleEditInputChange = (e) => {
         const { name, value, type, checked } = e.target;
 
-        // Handle device_id specially to ensure correct data type
+        // Pastikan device_id selalu integer
         let processedValue = value;
         if (name === 'device_id' && value) {
             const numValue = parseInt(value);
@@ -210,32 +213,44 @@ const JadwalSection = ({
                 throw new Error('Silakan pilih device terlebih dahulu.');
             }
 
-            // Validate that the selected device exists
-            const selectedDeviceId = editSchedule.device_id;
-            const selectedDevice = devices.find(device => {
-                return device.device_id == selectedDeviceId ||
-                    device.device_id === parseInt(selectedDeviceId) ||
-                    device.device_id === selectedDeviceId.toString();
-            });
+            // Pastikan device_id integer
+            const selectedDeviceId = parseInt(editSchedule.device_id);
+            if (isNaN(selectedDeviceId)) {
+                throw new Error('Device yang dipilih tidak valid.');
+            }
 
+            // Validasi device
+            const selectedDevice = devices.find(device =>
+                device.device_id === selectedDeviceId
+            );
             if (!selectedDevice) {
                 throw new Error('Device yang dipilih tidak valid.');
             }
 
-            // Extract the ID for the update call
-            const scheduleId = editSchedule.schedule_id;
+            // Siapkan data update tanpa schedule_id
+            const scheduleId = parseInt(editSchedule.schedule_id); // Ensure it's a number
             const updateData = { ...editSchedule };
-            delete updateData.schedule_id; // Remove ID from update data            await onUpdateSchedule(scheduleId, updateData);
+            delete updateData.schedule_id;
+            updateData.device_id = selectedDeviceId; // pastikan integer
+            
+            console.log('JadwalSection - About to update schedule:', {
+                scheduleId: scheduleId,
+                scheduleIdType: typeof scheduleId,
+                updateData,
+                originalSchedule: editSchedule
+            });
 
-            // Close modal
+            await onUpdateSchedule(scheduleId, updateData);
+            
+            console.log('JadwalSection - Schedule update completed successfully');
+
+            // Tutup modal dan reset state
             setShowEditModal(false);
             setEditSchedule(null);
 
-            // Refresh schedules data after update
-            if (onRefreshSchedules && typeof onRefreshSchedules === 'function') {
-                console.log('Refreshing schedules after update...');
-                await onRefreshSchedules();
-            }
+            console.log('JadwalSection - Schedule update completed successfully');
+
+            // No need to refresh schedules here - parent handles optimistic updates
 
         } catch (error) {
             setFormError(error.message);
@@ -248,12 +263,9 @@ const JadwalSection = ({
             try {
                 console.log('Deleting schedule ID:', scheduleId);
                 await onDeleteSchedule(scheduleId);
-
-                // Refresh schedules data after delete
-                if (onRefreshSchedules && typeof onRefreshSchedules === 'function') {
-                    console.log('Refreshing schedules after delete...');
-                    await onRefreshSchedules();
-                }
+                
+                // No need to refresh - parent handles optimistic updates
+                console.log('Schedule deleted successfully');
             } catch (error) {
                 console.error('Error deleting schedule:', error);
                 alert('Gagal menghapus jadwal: ' + error.message);
@@ -264,40 +276,25 @@ const JadwalSection = ({
         try {
             console.log('Toggling schedule status for ID:', scheduleId);
             await onToggleScheduleStatus(scheduleId);
-
-            // Refresh schedules data after toggle
-            if (onRefreshSchedules && typeof onRefreshSchedules === 'function') {
-                console.log('Refreshing schedules after toggle...');
-                await onRefreshSchedules();
-            }
+            
+            // No need to refresh - parent handles optimistic updates
+            console.log('Schedule status toggled successfully');
         } catch (error) {
             console.error('Error toggling schedule status:', error);
             alert('Gagal mengubah status jadwal: ' + error.message);
         }
-    };// Use only real schedules from database - no filtering
+    };    // Use only real schedules from database - no filtering
     const displaySchedules = Array.isArray(schedules) ? schedules : [];
 
-    // Debug logging for display schedules
+    // Debug logging for display schedules (removed to prevent excessive logging)
+    /*
     useEffect(() => {
         console.log('JadwalSection - displaySchedules:', displaySchedules);
         console.log('JadwalSection - displaySchedules length:', displaySchedules.length);
     }, [displaySchedules]);
+    */
 
-    // Auto-refresh schedules when component mounts or when devices change
-    useEffect(() => {
-        if (onRefreshSchedules && typeof onRefreshSchedules === 'function') {
-            console.log('JadwalSection - Auto-refreshing schedules...');
-            onRefreshSchedules();
-        }
-    }, [onRefreshSchedules]);
-
-    // Auto-refresh devices when component mounts
-    useEffect(() => {
-        if (onRefreshDevices && typeof onRefreshDevices === 'function') {
-            console.log('JadwalSection - Auto-refreshing devices...');
-            onRefreshDevices();
-        }
-    }, [onRefreshDevices]);
+    // No auto-refresh functions - data provided by parent component only
 
     // Get status badge styling
     const getStatusBadge = (status) => {
@@ -324,42 +321,21 @@ const JadwalSection = ({
                         Total: {displaySchedules.length} jadwal
                     </p>
                 </div>
-                <div className="flex space-x-2">                    <button
-                    onClick={() => onRefreshSchedules?.()}
-                    disabled={scheduleLoading}
-                    className="px-3 py-2 bg-blue-600 text-white text-sm font-medium rounded-md hover:bg-blue-700 disabled:opacity-50 flex items-center"
-                >
-                    <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                    </svg>
-                    {scheduleLoading ? 'Memuat...' : 'Refresh'}                    </button>
-
+                <div className="flex space-x-2">
                     <button
                         onClick={() => {
                             if (devicesLoading) {
                                 alert('Sedang memuat daftar devices. Mohon tunggu sebentar...');
                                 return;
                             }
-                            if (!devices || devices.length === 0) {
-                                alert('Tidak ada device yang tersedia. Pastikan perangkat ESP32 sudah terhubung sebelum menambahkan jadwal.');
-                                return;
-                            }
                             setShowAddModal(true);
                         }}
-                        disabled={devicesLoading || !devices || devices.length === 0}
-                        className="px-4 py-2 bg-green-600 text-white text-sm font-medium rounded-md hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center"
-                        title={
-                            devicesLoading
-                                ? "Sedang memuat devices..."
-                                : (!devices || devices.length === 0)
-                                    ? "Tidak ada device tersedia"
-                                    : "Tambah jadwal baru"
-                        }
+                        className="px-4 py-2 bg-green-600 text-white text-sm font-medium rounded-md hover:bg-green-700 flex items-center"
                     >
                         <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
                         </svg>
-                        {devicesLoading ? 'Memuat...' : 'Tambah Jadwal'}
+                        Tambah Jadwal
                     </button>
                 </div>
             </div>
@@ -392,17 +368,9 @@ const JadwalSection = ({
                                     <p className="text-amber-700 text-sm">
                                         ⚠️ Tidak ada device yang tersedia. Hubungkan perangkat ESP32 terlebih dahulu sebelum membuat jadwal.
                                     </p>
-                                    {onRefreshDevices && (
-                                        <button
-                                            onClick={() => {
-                                                console.log('Refreshing devices from empty state...');
-                                                onRefreshDevices();
-                                            }}
-                                            className="mt-2 px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700"
-                                        >
-                                            Refresh Devices
-                                        </button>
-                                    )}
+                                    <p className="text-amber-600 text-xs mt-2">
+                                        Pastikan ESP32 sudah terhubung dan refresh halaman jika perlu.
+                                    </p>
                                 </div>
                             ) : (
                                 <button
@@ -576,18 +544,7 @@ const JadwalSection = ({
                                 ) : (!devices || devices.length === 0) && (
                                     <div className="mt-1 text-sm text-amber-600">
                                         <p>⚠️ Tidak ada device yang tersedia. Pastikan perangkat ESP32 sudah terhubung.</p>
-                                        {onRefreshDevices && (
-                                            <button
-                                                type="button"
-                                                onClick={() => {
-                                                    console.log('Refreshing devices...');
-                                                    onRefreshDevices();
-                                                }}
-                                                className="mt-2 px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700"
-                                            >
-                                                Refresh Devices
-                                            </button>
-                                        )}
+                                        <p className="text-xs mt-1">Refresh halaman atau periksa koneksi ESP32.</p>
                                     </div>
                                 )}
                             </div>

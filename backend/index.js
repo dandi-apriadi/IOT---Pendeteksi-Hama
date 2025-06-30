@@ -26,6 +26,7 @@ import alarmRoutes from './routes/alarm.js';
 import analyticsRoutes from './routes/analytics.js';
 import scheduleRoutes from './routes/scheduleRoutes.js';
 import notificationRoutes from './routes/notificationRoutes.js';
+import pumpRoutes from './routes/pumpRoutes.js'; // Import the new pump routes
 
 // Import the new data processing function
 import { processWebSocketData } from './controllers/esp32Controller.js';
@@ -289,6 +290,7 @@ app.use('/api/alarms', alarmRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/schedules', scheduleRoutes);
 app.use('/api/notifications', notificationRoutes);
+app.use('/api/pump', pumpRoutes); // Add pump routes
 
 // =====================================================
 // ESP32 WebSocket Handler
@@ -405,6 +407,35 @@ wss.on('connection', (ws, req) => {
                         message: 'Device registration successful',
                         timestamp: new Date().toISOString()
                     }));
+
+                    // Sync all active schedules to the newly connected device
+                    try {
+                        const { syncAllSchedulesToDevice } = await import('./services/esp32Service.js');
+                        console.log(`Starting schedule sync for device ${deviceId}`);
+                        
+                        // Small delay to ensure device is ready to receive commands
+                        setTimeout(async () => {
+                            try {
+                                const syncResult = await syncAllSchedulesToDevice(deviceId);
+                                console.log(`Schedule sync completed for ${deviceId}:`, syncResult);
+                                
+                                // Send sync status to device
+                                if (espConnections.has(deviceId)) {
+                                    espConnections.get(deviceId).ws.send(JSON.stringify({
+                                        type: 'schedule_sync_complete',
+                                        syncedCount: syncResult.syncedCount,
+                                        totalSchedules: syncResult.totalSchedules,
+                                        success: syncResult.success,
+                                        timestamp: new Date().toISOString()
+                                    }));
+                                }
+                            } catch (syncError) {
+                                console.error(`Schedule sync failed for ${deviceId}:`, syncError.message);
+                            }
+                        }, 2000); // 2 second delay
+                    } catch (importError) {
+                        console.error(`Failed to import schedule sync service:`, importError.message);
+                    }
                 } catch (dbError) {
                     console.error(`Database registration failed for ${deviceId}: ${dbError}`);
 
@@ -419,10 +450,201 @@ wss.on('connection', (ws, req) => {
                     }));
                 }
             }
+            // Handle schedules response from ESP32
+            else if (messageType === 'schedules_response') {
+                console.log(`[SCHEDULE] Received schedules list from ${deviceId}:`, {
+                    scheduleCount: message.schedules ? message.schedules.length : 0,
+                    schedules: message.schedules
+                });
+                
+                // Send acknowledgment back to ESP32
+                if (ws && ws.readyState === 1) {
+                    ws.send(JSON.stringify({
+                        type: 'ack',
+                        received_type: 'schedules_response',
+                        success: true,
+                        timestamp: new Date().toISOString()
+                    }));
+                }
+                
+                // Log the current schedules in ESP32
+                if (message.schedules && message.schedules.length > 0) {
+                    console.log(`[SCHEDULE] Current schedules in ${deviceId}:`);
+                    message.schedules.forEach((schedule, index) => {
+                        const timeStr = `${String(schedule.hour).padStart(2, '0')}:${String(schedule.minute).padStart(2, '0')}`;
+                        const executed = schedule.hasExecutedToday ? ' (executed today)' : ' (pending)';
+                        console.log(`  ${index + 1}. ${timeStr}${executed}`);
+                    });
+                } else {
+                    console.log(`[SCHEDULE] No active schedules found in ${deviceId}`);
+                }
+            }
+            // Handle schedule response from ESP32
+            else if (messageType === 'schedule_response') {
+                console.log(`[SCHEDULE] Received schedule response from ${deviceId}:`, {
+                    action: message.action,
+                    success: message.success,
+                    hour: message.hour,
+                    minute: message.minute,
+                    message: message.message
+                });
+                
+                // Send acknowledgment back to ESP32
+                if (ws && ws.readyState === 1) {
+                    ws.send(JSON.stringify({
+                        type: 'ack',
+                        received_type: 'schedule_response',
+                        success: true,
+                        timestamp: new Date().toISOString()
+                    }));
+                }
+                
+                // Log successful schedule operations
+                if (message.success) {
+                    console.log(`[SCHEDULE] Successfully ${message.action}ed schedule ${message.hour}:${String(message.minute).padStart(2, '0')} on device ${deviceId}`);
+                } else {
+                    console.error(`[SCHEDULE] Failed to ${message.action} schedule ${message.hour}:${String(message.minute).padStart(2, '0')} on device ${deviceId}: ${message.message}`);
+                }
+            }
+            // Handle sync status from ESP32
+            else if (messageType === 'schedule_sync_complete') {
+                console.log(`[SCHEDULE] Schedule sync completed for ${deviceId}:`, {
+                    syncedCount: message.syncedCount,
+                    totalSchedules: message.totalSchedules,
+                    success: message.success
+                });
+            }
+            // Handle pump status change message with activation type
+            else if (messageType === 'pump_status') {
+                console.log(`[PUMP] Received pump status update from ${deviceId}:`, {
+                    status: message.status,
+                    activation_type: message.activation_type,
+                    timestamp: message.timestamp
+                });
+                
+                // Create appropriate notification based on activation type
+                try {
+                    const { Device } = await import("./models/tableModel.js");
+                    const { createPumpActivationNotification, createPumpDeactivationNotification } = 
+                        await import("./controllers/notificationController.js");
+                    
+                    // Find device in the database
+                    const device = await Device.findOne({ 
+                        where: { device_name: deviceId }
+                    });
+                    
+                    if (device) {
+                        const deviceInfo = {
+                            device_id: device.device_id,
+                            device_name: device.device_name,
+                            location: device.location
+                        };
+                        
+                        // Determine if this is a scheduled action
+                        const isScheduled = message.activation_type === 'SCHEDULE';
+                        
+                        if (message.status) {
+                            // Pump turned ON - create activation notification
+                            console.log(`[PUMP] Creating pump activation notification for ${deviceId} (${message.activation_type})`);
+                            await createPumpActivationNotification(deviceInfo, isScheduled, null, message.activation_type);
+                        } else {
+                            // Pump turned OFF - create deactivation notification
+                            console.log(`[PUMP] Creating pump deactivation notification for ${deviceId} (${message.activation_type})`);
+                            await createPumpDeactivationNotification(deviceInfo, isScheduled, null, message.activation_type);
+                        }
+                        
+                        // Broadcast pump status to frontend with activation type
+                        io.emit('pump_status_update', {
+                            device_id: deviceId,
+                            status: message.status,
+                            activation_type: message.activation_type,
+                            timestamp: message.timestamp
+                        });
+                    }
+                } catch (notifError) {
+                    console.error(`Error creating pump status notification for ${deviceId}: ${notifError.message}`);
+                }
+                
+                // Send acknowledgment back to ESP32
+                if (ws && ws.readyState === 1) {
+                    ws.send(JSON.stringify({
+                        type: 'ack',
+                        received_type: 'pump_status',
+                        success: true,
+                        timestamp: new Date().toISOString()
+                    }));
+                }
+            }
             // Handle sensor_data message with our updated processing function
             else if (messageType === 'sensor_data') {
+                // Store the previous pump status (if available) before updating
+                let previousPumpStatus = false;
+                if (deviceId && espConnections.has(deviceId)) {
+                    const deviceConn = espConnections.get(deviceId);
+                    if (deviceConn.deviceInfo && deviceConn.deviceInfo.pump_status !== undefined) {
+                        previousPumpStatus = deviceConn.deviceInfo.pump_status;
+                    }
+                }
+
                 // Process the sensor data with our new filtering function
                 const processingResult = await processWebSocketData(message);
+                
+                // Check if pump status has changed
+                const currentPumpStatus = message.pump_status;
+                
+                // Update device connection info with the current pump status
+                if (deviceId && espConnections.has(deviceId)) {
+                    const deviceConn = espConnections.get(deviceId);
+                    deviceConn.deviceInfo.pump_status = currentPumpStatus;
+                    deviceConn.deviceInfo.auto_mode = message.auto_mode || false;
+                    
+                    // If pump status changed and it's not the first reading
+                    // This prevents creating notifications on initial connection
+                    if (previousPumpStatus !== undefined && 
+                        currentPumpStatus !== previousPumpStatus && 
+                        deviceConn.deviceInfo.connected_since) {
+                        
+                        // Get time since connection to avoid notifications during initial setup
+                        const timeConnected = Date.now() - new Date(deviceConn.deviceInfo.connected_since).getTime();
+                        
+                        // Only create notifications if device has been connected for at least 10 seconds
+                        // This avoids notifications during reconnection or initialization
+                        if (timeConnected > 10000) {
+                            try {
+                                // Import needed modules
+                                const { Device } = await import("./models/tableModel.js");
+                                const { createPumpActivationNotification, createPumpDeactivationNotification } = 
+                                    await import("./controllers/notificationController.js");
+                                
+                                // Find device in the database
+                                const device = await Device.findOne({ 
+                                    where: { device_name: deviceId }
+                                });
+                                
+                                if (device) {
+                                    const deviceInfo = {
+                                        device_id: device.device_id,
+                                        device_name: device.device_name,
+                                        location: device.location
+                                    };
+                                    
+                                    // Create notification based on the new pump status
+                                    if (currentPumpStatus) {
+                                        // Pump turned ON
+                                        console.log(`[PUMP] Detected pump turned ON for ${deviceId}, creating notification`);
+                                        await createPumpActivationNotification(deviceInfo, false);
+                                    } else {
+                                        // Pump turned OFF
+                                        console.log(`[PUMP] Detected pump turned OFF for ${deviceId}, creating notification`);
+                                        await createPumpDeactivationNotification(deviceInfo, false);
+                                    }
+                                }
+                            } catch (notifError) {
+                                console.error(`Error creating pump status change notification: ${notifError.message}`);
+                            }
+                        }
+                    }
+                }
 
                 // Send acknowledgment back to the device
                 try {
@@ -747,6 +969,162 @@ async function checkInactiveDevices() {
 
 // Run the inactive device check every 10 seconds
 setInterval(checkInactiveDevices, 10000);
+
+// Import needed functions for schedule execution
+import Schedule from './models/scheduleModel.js';
+import { Device } from './models/tableModel.js'; // Add Device model import
+import { sendCommandToDevice } from './services/esp32Service.js';
+import { createPumpActivationNotification, createScheduleExecutionNotification } from './controllers/notificationController.js';
+
+/**
+ * Checks for schedules that need to be executed and runs them
+ * This function will run every minute and check for schedules that need to be executed
+ */
+async function checkAndExecuteSchedules() {
+    try {
+        console.log('[SCHEDULE CHECKER] Checking for schedules to execute...');
+        
+        // Get current date and time
+        const now = new Date();
+        
+        // Find all active schedules that should run at this time
+        const schedulesToRun = await Schedule.findAll({
+            where: {
+                is_active: true
+            },
+            include: [{
+                model: Device,
+                attributes: ['device_name', 'location']
+            }]
+        });
+        
+        if (schedulesToRun.length === 0) {
+            console.log('[SCHEDULE CHECKER] No active schedules found');
+            return;
+        }
+        
+        console.log(`[SCHEDULE CHECKER] Found ${schedulesToRun.length} active schedules to check`);
+        
+        // Check each schedule if it should run now
+        for (const schedule of schedulesToRun) {
+            try {
+                const { schedule_id, title, device_id, schedule_type, start_time, action_type } = schedule;
+                const device = schedule.Device;
+                
+                // Skip if no associated device
+                if (!device) {
+                    console.log(`[SCHEDULE CHECKER] Schedule ${schedule_id} (${title}) has no associated device`);
+                    continue;
+                }
+                
+                const deviceName = device.device_name;
+                const deviceLocation = device.location;
+                
+                // Parse schedule time
+                const scheduleTime = new Date(start_time);
+                const scheduleHour = scheduleTime.getHours();
+                const scheduleMinute = scheduleTime.getMinutes();
+                
+                // Check if schedule should run at current time
+                const currentHour = now.getHours();
+                const currentMinute = now.getMinutes();
+                
+                let shouldRun = false;
+                
+                // For 'daily' schedules, check if current time matches schedule time
+                if (schedule_type === 'daily' && 
+                    currentHour === scheduleHour && 
+                    currentMinute === scheduleMinute) {
+                    shouldRun = true;
+                }
+                // For 'one-time' schedules, check if current time matches and it hasn't been executed
+                else if (schedule_type === 'one-time' && 
+                         !schedule.last_executed &&
+                         currentHour === scheduleHour && 
+                         currentMinute === scheduleMinute) {
+                    shouldRun = true;
+                }
+                // For 'weekly' schedules, check day of week as well
+                else if (schedule_type === 'weekly') {
+                    const currentDay = now.getDay(); // 0 = Sunday, 1 = Monday, etc.
+                    const scheduleDay = scheduleTime.getDay();
+                    
+                    if (currentDay === scheduleDay && 
+                        currentHour === scheduleHour && 
+                        currentMinute === scheduleMinute) {
+                        shouldRun = true;
+                    }
+                }
+                
+                if (shouldRun) {
+                    console.log(`[SCHEDULE CHECKER] Executing schedule ${schedule_id} (${title}) for device ${deviceName}`);
+                    
+                    // Prepare device info for notification
+                    const deviceInfo = {
+                        device_id,
+                        device_name: deviceName,
+                        location: deviceLocation
+                    };
+                    
+                    // Execute the schedule (turn pump on)
+                    if (action_type === 'pump_on') {
+                        try {
+                            // Check if device is connected
+                            if (espConnections.has(deviceName)) {
+                                // Send command to device
+                                await sendCommandToDevice(deviceName, 'pump_on');
+                                
+                                // Create pump activation notification (isScheduled = true)
+                                await createPumpActivationNotification(deviceInfo, true, schedule, 'SCHEDULE');
+                                
+                                // Create schedule execution notification (success = true)
+                                await createScheduleExecutionNotification(deviceInfo, schedule, true);
+                                
+                                // Update schedule last_executed time
+                                await schedule.update({ 
+                                    last_executed: now,
+                                    execution_status: 'success'
+                                });
+                                
+                                console.log(`[SCHEDULE CHECKER] Successfully executed schedule ${schedule_id}`);
+                            } else {
+                                // Device offline, create failure notification
+                                const errorMsg = `Perangkat ${deviceName} sedang offline`;
+                                await createScheduleExecutionNotification(deviceInfo, schedule, false, errorMsg);
+                                
+                                await schedule.update({
+                                    last_executed: now,
+                                    execution_status: 'failed',
+                                    failure_reason: errorMsg
+                                });
+                                
+                                console.log(`[SCHEDULE CHECKER] Failed to execute schedule ${schedule_id}: Device offline`);
+                            }
+                        } catch (error) {
+                            // Command failed, create failure notification
+                            await createScheduleExecutionNotification(deviceInfo, schedule, false, error.message);
+                            
+                            await schedule.update({
+                                last_executed: now,
+                                execution_status: 'failed',
+                                failure_reason: error.message
+                            });
+                            
+                            console.error(`[SCHEDULE CHECKER] Error executing schedule ${schedule_id}:`, error.message);
+                        }
+                    }
+                }
+            } catch (scheduleError) {
+                console.error(`[SCHEDULE CHECKER] Error processing schedule ${schedule.schedule_id}:`, scheduleError);
+            }
+        }
+    } catch (error) {
+        console.error('[SCHEDULE CHECKER] Error checking schedules:', error);
+    }
+}
+
+// Run schedule checker every minute
+setInterval(checkAndExecuteSchedules, 60000);
 
 // Make sure you have a route to the server running
 const PORT = process.env.PORT || 5000;

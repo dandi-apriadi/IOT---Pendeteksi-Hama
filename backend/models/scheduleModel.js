@@ -47,6 +47,26 @@ const Schedule = db.define('schedules', {
         allowNull: false,
         defaultValue: true
     },
+    last_executed: {
+        type: DataTypes.DATE,
+        allowNull: true,
+        get() {
+            const rawValue = this.getDataValue('last_executed');
+            if (rawValue) {
+                return moment(rawValue).format('D MMMM, YYYY, h:mm A');
+            }
+            return null;
+        }
+    },
+    execution_status: {
+        type: DataTypes.ENUM('pending', 'success', 'failed'),
+        allowNull: false,
+        defaultValue: 'pending'
+    },
+    failure_reason: {
+        type: DataTypes.TEXT,
+        allowNull: true
+    },
     created_at: {
         type: DataTypes.DATE,
         defaultValue: DataTypes.NOW,

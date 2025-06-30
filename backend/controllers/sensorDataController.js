@@ -941,40 +941,85 @@ export const getAllSensorData = async (req, res) => {
             order: [['timestamp', 'DESC']]
         });
 
-        // Algoritma deteksi gerak serangga:
-        // Jika ada 30 gerakan (pir_status true) dalam 30 detik, anggap sebagai gerakan serangga
+        // Algoritma deteksi gerak serangga yang lebih ketat:
+        // 1. Serangga terdeteksi jika sensor PIR terus aktif selama 30 detik secara konsisten
+        // 2. Kurangi spam notifikasi dengan memastikan ada jeda minimal 5 menit antar notifikasi
+        
         const result = [];
-        let window = [];
-        for (let i = 0; i < rawData.length; i++) {
-            const item = rawData[i];
-            if (item.pir_status) {
-                window.push(item);
-                // Hapus data di luar 5 detik dari window (untuk uji coba)
-                const baseTime = new Date(item.timestamp).getTime();
-                window = window.filter(d => (baseTime - new Date(d.timestamp).getTime()) <= 5000);
-                if (window.length >= 30) {
-                    // Hanya tambahkan satu entri untuk satu deteksi serangga
-                    result.push({
-                        ...item.toJSON(),
-                        insect_detected: true
-                    });
-                    // Kirim notifikasi jika deteksi serangga
-                    await notifyInsectDetection({
-                        device: item.device,
-                        device_id: item.device_id,
-                        timestamp: item.timestamp
-                    });
-                    // Log ke database juga untuk uji coba
-                    await Notification.create({
-                        type: 'debug',
-                        title: 'Debug Notifikasi',
-                        message: `Notifikasi debug pada ${item.timestamp} device ${item.device_id}`
-                    });
-                    // Kosongkan window agar tidak spam notifikasi
-                    window = [];
-                }
-            }
+        
+        // Track last notification time to prevent spam
+        if (!global.lastInsectNotificationTime) {
+            global.lastInsectNotificationTime = new Map();
         }
+        
+        // Group readings by device
+        const deviceReadings = {};
+        rawData.forEach(item => {
+            if (!deviceReadings[item.device_id]) {
+                deviceReadings[item.device_id] = [];
+            }
+            deviceReadings[item.device_id].push(item);
+        });
+        
+        // Process each device separately
+        for (const [deviceId, readings] of Object.entries(deviceReadings)) {
+            // Sort readings by timestamp (oldest first)
+            readings.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+            
+            // Find consistent motion periods
+            let consecutiveActiveTime = 0;
+            let lastActiveTime = null;
+            let firstActiveReading = null;
+            
+            for (const item of readings) {
+                if (item.pir_status) {
+                    const currentTime = new Date(item.timestamp).getTime();
+                    
+                    if (!firstActiveReading) {
+                        firstActiveReading = item;
+                        lastActiveTime = currentTime;
+                        consecutiveActiveTime = 0;
+                    } else if (currentTime - lastActiveTime <= 2000) { // Allow small gaps (2 sec max)
+                        consecutiveActiveTime += (currentTime - lastActiveTime);
+                    } else {
+                        // Reset if there's a gap in activity
+                        firstActiveReading = item;
+                        consecutiveActiveTime = 0;
+                    }
+                    
+                    lastActiveTime = currentTime;
+                    
+                    // Check if we have 30 seconds of consecutive activity
+                    if (consecutiveActiveTime >= 30000) { // 30 seconds
+                        // Add to results regardless of notification status
+                        result.push({
+                            ...item.toJSON(),
+                            insect_detected: true,
+                            active_duration: consecutiveActiveTime / 1000 // in seconds
+                        });
+                        
+                        // Send notification (the function will check for cooldown)
+                        await notifyInsectDetection({
+                            device: item.device,
+                            device_id: item.device_id,
+                            timestamp: item.timestamp,
+                            duration: Math.round(consecutiveActiveTime / 1000) // in seconds
+                        });
+                        
+                        // Reset detection to avoid multiple notifications
+                        consecutiveActiveTime = 0;
+                        firstActiveReading = null;
+                    }
+                } else {
+                    // Reset on inactivity
+                    if (consecutiveActiveTime < 30000) { // Only reset if we haven't reached threshold
+                        consecutiveActiveTime = 0;
+                        firstActiveReading = null;
+                    }
+                }
+            } // End of readings loop
+        } // End of device loop
+        
         res.json({ status: 'success', data: result });
     } catch (error) {
         console.error('Error in getAllSensorData:', error);
@@ -1356,10 +1401,29 @@ export const getLatestEnergyDataInternal = async (deviceId) => {
  */
 export const notifyInsectDetection = async (detectionEvent) => {
     try {
-        const { device, device_id, timestamp } = detectionEvent;
-        const title = 'Deteksi Serangga';
-        const message = `Serangga terdeteksi oleh sensor ${device?.device_name || device_id} di lokasi ${device?.location || '-'} pada ${timestamp}`;
-        await Notification.create({ type: 'insect', title, message, device_id });
+        const { device, device_id, timestamp, duration = 0 } = detectionEvent;
+        
+        // Check if we've already sent a notification for this device recently
+        const hasRecent = await Notification.hasRecentNotifications('insect', device_id, 5); // 5 minute cooldown
+        
+        if (hasRecent) {
+            console.log(`[INSECT DETECTION] Skipping notification for device ${device_id} - cooldown period active`);
+            return;
+        }
+        
+        // Prepare device info
+        const deviceInfo = {
+            device_id,
+            device_name: device?.device_name,
+            location: device?.location,
+            duration // Include duration in seconds
+        };
+        
+        // Use the specialized notification function from notificationController
+        const { createInsectDetectionNotification } = await import('./notificationController.js');
+        await createInsectDetectionNotification(deviceInfo, timestamp);
+        
+        console.log(`[INSECT DETECTION] Notification created for device ${device_id} at ${timestamp} (activity duration: ${duration}s)`);
     } catch (err) {
         console.error('Failed to create insect detection notification:', err.message);
     }
